@@ -1017,3 +1017,17 @@ test('the database file that holds API keys is owner-only', async () => {
   assert.equal(fs.statSync(path.join(st.DATA_DIR, 'db.json')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(st.DATA_DIR).mode & 0o777, 0o700);
 });
+
+test('the page tells you which build you are running and never serves stale files', async () => {
+  const html = await fetch(base + '/');
+  const text = await html.text();
+  const build = (await call('GET', '/api/meta')).body.build;
+  assert.match(build, /^[0-9a-f]{7}$/);
+  assert.equal(html.headers.get('cache-control'), 'no-store');
+  assert.ok(text.includes(`style.css?v=${build}`));                                  // every asset is tagged with the build id
+  assert.ok((text.match(new RegExp(`\\.js\\?v=${build}`, 'g')) || []).length >= 10);
+  const css = await fetch(base + '/style.css?v=' + build);
+  assert.equal(css.status, 200);
+  assert.equal(css.headers.get('cache-control'), 'no-cache');
+  assert.equal((await fetch(base + '/index.html')).status, 200);
+});

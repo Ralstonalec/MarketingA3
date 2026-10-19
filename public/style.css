@@ -31,6 +31,7 @@ img,video{max-width:100%}
 .bar.hot i{background:var(--err)}
 main{padding:28px 32px 64px;max-width:1280px;width:100%;min-width:0}
 .scrim{display:none}
+.build{font-size:11px;color:var(--mut);padding:0 8px;opacity:.8}
 
 /* ---- type ---- */
 h1{font-size:24px;letter-spacing:-.015em;margin:0 0 4px}
@@ -144,6 +145,7 @@ svg.chart{width:100%;height:140px;display:block}.chart rect{fill:var(--acc)}.cha
   .app{grid-template-columns:minmax(0,1fr)}
   .side{position:sticky;top:0;height:auto;flex-direction:row;align-items:center;gap:10px;padding:10px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}
   .brand{flex:1;padding:0}
+  .build{display:none}
   .spendpill{padding:6px 10px;order:2}.spendpill small,.spendpill .bar{display:none}.spendpill b{font-size:15px}
   .menu-btn{display:grid;place-items:center;width:42px;height:42px;border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line);color:var(--text);font-size:20px;cursor:pointer;order:3}
   #nav{position:fixed;top:0;left:0;bottom:0;width:min(300px,84vw);background:var(--bg);border-right:1px solid var(--line);padding:16px 12px 24px;transform:translateX(-102%);transition:transform .22s var(--ease);overflow-y:auto;z-index:50;box-shadow:var(--shadow)}

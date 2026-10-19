@@ -55,6 +55,21 @@ function readJson(req) {
   });
 }
 
+/** Changes whenever any file in public/ changes, so you can tell which version you are looking at and caches never go stale. */
+function buildId() {
+  const dir = path.join(__dirname, 'public');
+  const parts = fs.readdirSync(dir).sort().map((f) => { const st = fs.statSync(path.join(dir, f)); return `${f}:${st.size}:${Math.round(st.mtimeMs)}`; });
+  return crypto.createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 7);
+}
+
+/** index.html with every script/stylesheet tagged ?v=<build>, so a browser can never run a mix of old and new files. */
+function serveIndex(res) {
+  const v = buildId();
+  const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8').replace(/((?:src|href)="[\w.-]+\.(?:js|css))"/g, `$1?v=${v}"`);
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
+}
+
 function serveFile(res, root, rel, req) {
   const file = path.join(root, path.normalize(rel));
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
@@ -69,7 +84,9 @@ function serveFile(res, root, rel, req) {
     res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
     return fs.createReadStream(file, { start, end }).pipe(res);
   }
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes' });
+  // App files must always be revalidated; generated media can be cached a while.
+  const cache = root.endsWith('public') ? 'no-cache' : 'private, max-age=3600';
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': cache });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -278,7 +295,7 @@ async function api(req, res, url) {
     if (m === 'DELETE' && idPart) { pipeline.remove(idPart); return send(res, 200, { ok: true }); }
   }
   if (root === 'meta' && m === 'GET') {
-    return send(res, 200, { formats: composer.formats(), platforms: composer.PLATFORMS, ratios: pipeline.RATIOS, cameras: presets.list(presets.CAMERA), looks: presets.list(presets.LOOK) });
+    return send(res, 200, { formats: composer.formats(), build: buildId(), platforms: composer.PLATFORMS, ratios: pipeline.RATIOS, cameras: presets.list(presets.CAMERA), looks: presets.list(presets.LOOK) });
   }
   send(res, 404, { error: 'Not found' });
 }
@@ -296,7 +313,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/files/uploads/')) return serveFile(res, store.UPLOADS, url.pathname.slice(15), req);
     if (url.pathname.startsWith('/files/outputs/')) return serveFile(res, store.OUTPUTS, url.pathname.slice(15), req);
-    const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+    if (url.pathname === '/' || url.pathname === '/index.html') return serveIndex(res);
+    const rel = url.pathname.slice(1);
     return serveFile(res, path.join(__dirname, 'public'), rel, req);
   } catch (e) {
     if (!res.headersSent) send(res, e.code >= 400 && e.code < 600 ? e.code : 400, { error: e.message });

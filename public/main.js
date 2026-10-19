@@ -88,6 +88,7 @@ setInterval(guard(async () => {
 
 guard(async () => {
   state.meta = await api('GET', 'meta');
+  document.getElementById('build').textContent = `Build ${state.meta.build}`;
   await Promise.all([refreshLight(), refreshModels()]);
   state.keyChecks = await api('GET', 'accounts').then((a) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.check]))).catch(() => ({}));
   if (!setupProgress().complete) state.view = 'setup';   // first visit lands on guided setup
