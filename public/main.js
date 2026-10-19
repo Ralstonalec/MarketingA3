@@ -36,13 +36,13 @@ function viewSettings() {
 
 const NAV = [
   ['sec', 'Create'], ['quick', 'Quick Ad'], ['compose', 'Ad Composer'], ['studio', 'Studio'], ['tools', 'Tools'], ['gallery', 'Gallery'],
-  ['sec', 'Manage'], ['library', 'Library'], ['models', 'Models'], ['spend', 'Spend'], ['settings', 'Settings'],
+  ['sec', 'Manage'], ['library', 'Library'], ['models', 'Models'], ['knowledge', 'Knowledge'], ['spend', 'Spend'], ['settings', 'Settings'],
 ];
 
 async function render() {
   document.getElementById('nav').replaceChildren(...NAV.map(([k, label]) => k === 'sec' ? h('div', { class: 'sec' }, label)
     : h('button', { class: state.view === k ? 'on' : '', onclick: () => { state.view = k; render(); } }, label)));
-  const views = { quick: viewQuick, tools: viewTools, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, spend: viewSpend, settings: viewSettings };
+  const views = { quick: viewQuick, tools: viewTools, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, knowledge: viewKnowledge, spend: viewSpend, settings: viewSettings };
   const token = (render.token = (render.token || 0) + 1);
   const el = await views[state.view]();
   if (token === render.token) document.getElementById('main').replaceChildren(el);

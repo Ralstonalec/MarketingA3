@@ -196,7 +196,9 @@ async function api(req, res, url) {
   if (root === 'spend' && m === 'GET') return send(res, 200, ledger.summary());
   if (root === 'ledger' && m === 'GET') return send(res, 200, store.db.ledger.slice(-500).reverse());
   if (root === 'knowledge') {
-    if (m === 'GET') { const k = store.db.knowledge; return send(res, 200, k ? { loaded: true, meta: k.meta, pack: k.pack } : { loaded: false }); }
+    if (m === 'GET') { const k = store.db.knowledge; return send(res, 200, k ? { loaded: true, meta: k.meta, pack: k.pack, status: knowledge.status() } : { loaded: false }); }
+    if (m === 'POST' && idPart === 'verify') return send(res, 200, await knowledge.verifySources());
+    if (m === 'POST' && idPart === 'approve') { const b = await readJson(req); return send(res, 200, knowledge.approve(b.key, b.approved !== false)); }
     if (m === 'POST' && idPart === 'validate') return send(res, 200, knowledge.validate((await readJson(req)).pack).report);
     if (m === 'POST' && !idPart) { const b = await readJson(req); try { return send(res, 201, knowledge.save(b.pack, b.name)); } catch (e) { return send(res, e.code || 400, { error: e.message, report: e.report }); } }
     if (m === 'DELETE') { knowledge.clear(); return send(res, 200, { ok: true }); }

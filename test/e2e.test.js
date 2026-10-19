@@ -482,8 +482,9 @@ const EV = { strength: 'MODERATE', source: 'https://seller-us.tiktok.com/univers
 const PACK = {
   frameworks: [{ id: 'shop_demo', label: 'Shop demo', platforms: ['tiktok_shop'], bestFor: ['gadgets'], beats: [{ name: 'Hook', goal: 'Show product in use' }, { name: 'Proof', goal: 'Show a benefit' }, { name: 'CTA', goal: 'Tap to buy' }], hookFormulas: ['pain'], voiceoverDensity: 'medium', evidence: EV }],
   hookFormulas: [{ id: 'result_first', instruction: 'Open with the end result the viewer wants, if the product facts state it.', requires: 'facts', evidence: EV }],
-  platformRules: { tiktok_shop: { idealSeconds: [15, 45], hookWithinSeconds: 2, textAdvice: 'Keep text inside the safe area.', requiredElements: ['Product clearly visible early'], source: EV.source } },
+  platformRules: { tiktok_shop: { idealSeconds: [15, 45], hookWithinSeconds: 2, textAdvice: 'Keep text inside the safe area.', requiredElements: ['Product clearly visible early'], source: EV.source, quotes: { idealSeconds: 'between 15 and 45 seconds', hookWithinSeconds: 'within the first 2 seconds' } } },
   claimPatterns: [{ regex: '\\bmiracle\\b', reason: 'Miracle claims need substantiation', appliesTo: 'law', severity: 'block', source: 'https://www.ftc.gov/example', year: 2024 },
+    { regex: '\\bzorbulous\\b', reason: 'Made-up superlatives cannot be substantiated', appliesTo: 'law', severity: 'block', source: 'https://www.ftc.gov/example', year: 2024 },
     { regex: '\\bviral\\b', reason: 'Do not imply popularity you cannot prove', appliesTo: 'all', severity: 'warn', unlessProvided: true }],
   cliches: [{ phrase: 'unlock the secret', why: 'tired' }],
   aiFailureModes: [{ id: 'hands', label: 'Hands', promptAvoid: 'exactly five fingers on each hand', motionAvoid: 'hands stay still and in frame' }],
@@ -531,7 +532,9 @@ test('a loaded pack changes the writer: guidance in the prompt, blocked claims r
   assert.equal(c.framework, 'shop_demo');
   const first = writerCalls()[n0].messages[1].content;
   assert.match(first, /Platform guidance \(from sourced research\)/);
-  assert.match(first, /Ideal length: 15-45 seconds/);
+  assert.doesNotMatch(first, /Ideal length/);                                       // numbers are HELD until a quote is verified or approved
+  assert.doesNotMatch(first, /Land the hook within/);
+  assert.match(first, /Keep text inside the safe area/);                            // number-free guidance is used
   assert.match(first, /Product clearly visible early/);
   assert.match(first, /unlock the secret/);
   assert.match(writerCalls()[n0 + 1].messages[2 + 1].content, /miracle/i);          // repair turn names the blocked claim
@@ -544,6 +547,61 @@ test('a loaded pack changes the writer: guidance in the prompt, blocked claims r
   const w = (await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' })).body.concepts[0];
   assert.ok(w.warnings.some((x) => x.level === 'note' && /popularity/.test(x.text)));
   assert.ok(!w.warnings.some((x) => x.level === 'error'));
+});
+
+test('verification: dead sources are dropped, found quotes release held numbers, unreadable pages stay held until a person approves', async () => {
+  const knowledgeMod = require('../lib/knowledge');
+  const filler = 'Advice for sellers about making product videos that people enjoy watching and trust. '.repeat(12);
+  const fetcher = async (url) => {
+    if (url.includes('ftc.gov')) throw Object.assign(new Error('The page returned HTTP 404.'), { code: 400 });
+    return { url, body: Buffer.from(`<html><body><p>${filler}</p><p>Product videos work well between 15 and 45 seconds long.</p></body></html>`) };
+  };
+  const zorb = () => orScript.push(good({ hook: 'A zorbulous serum' }), good());
+  const n0 = writerCalls().length;
+  zorb();
+  await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' });
+  assert.equal(writerCalls().length - n0, 2);                                        // the pack's blocking rule applies before verification
+  orScript.length = 0;
+
+  const v = await knowledgeMod.verifySources({ fetcher });
+  const bySrc = Object.fromEntries(v.results.map((r) => [r.url, r.status]));
+  assert.equal(bySrc['https://www.ftc.gov/example'], 'dead');
+  assert.equal(bySrc[EV.source], 'ok');
+  const st = (await call('GET', '/api/knowledge')).body.status;
+  const held = Object.fromEntries(st.held.map((h) => [h.field, h]));
+  assert.equal(held.idealSeconds.trusted, true);                                      // its quote was found on the page
+  assert.equal(held.hookWithinSeconds.trusted, false);                                // its quote was NOT on the page
+
+  const n1 = writerCalls().length;
+  orScript.push(good({ hook: 'A zorbulous serum' }));
+  const r = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' });
+  assert.equal(writerCalls().length - n1, 1);                                         // dead source => that rule is no longer enforced
+  assert.equal(r.body.concepts[0].warnings.filter((w) => w.level === 'error').length, 0);
+  const prompt = writerCalls()[n1].messages[1].content;
+  assert.match(prompt, /Ideal length: 15-45 seconds/);                                // released by the verified quote
+  assert.doesNotMatch(prompt, /Land the hook within/);                                // still held
+
+  assert.equal((await call('POST', '/api/knowledge/approve', { key: 'platformRules:nowhere.idealSeconds' })).status, 400);
+  assert.equal((await call('POST', '/api/knowledge/approve', { key: 'platformRules:tiktok_shop.hookWithinSeconds' })).status, 200);   // a person read the source
+  const n2 = writerCalls().length;
+  orScript.push(good());
+  await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' });
+  assert.match(writerCalls()[n2].messages[1].content, /Land the hook within 2 second/);
+  orScript.length = 0;
+});
+
+test('verification: redirects to the home page and unreadable pages are classified, not trusted', async () => {
+  const knowledgeMod = require('../lib/knowledge');
+  const fetcher = async (url) => url.includes('seller-us')
+    ? { url: 'https://seller-us.tiktok.com/', body: Buffer.from('<html>home</html>') }               // soft-404: redirected to the home page
+    : { url, body: Buffer.from('<html><body><div id="root"></div></body></html>') };               // JS app: no readable text
+  const v = await knowledgeMod.verifySources({ fetcher });
+  const bySrc = Object.fromEntries(v.results.map((r) => [r.url, r.status]));
+  assert.equal(bySrc[EV.source], 'soft');
+  assert.equal(bySrc['https://www.ftc.gov/example'], 'unreadable');
+  const held = Object.fromEntries((await call('GET', '/api/knowledge')).body.status.held.map((h) => [h.field, h]));
+  assert.equal(held.idealSeconds.trusted, false);               // its page stopped checking out, so the earlier confirmation is withdrawn
+  assert.equal(held.hookWithinSeconds.trusted, true);           // a person's approval is not withdrawn by a failed fetch
 });
 
 test('post kit: caption, hashtags and a checklist that includes sourced pack rules', async () => {

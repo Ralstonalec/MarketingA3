@@ -17,6 +17,21 @@ function productDetails(p = {}) {
   };
 }
 
+/** Who the presenter is matters legally: an AI character cannot give a first-person testimonial. */
+function actorDetails(a = {}) {
+  let kind = a.kind === 'real' ? 'real' : 'ai', attest = !!a.attestUsed;
+  const box = h('div', {});
+  const draw = () => box.replaceChildren(
+    h('label', {}, 'Who is this presenter?'),
+    h('select', { onchange: (e) => { kind = e.target.value; if (kind === 'ai') attest = false; draw(); } },
+      h('option', { value: 'ai', selected: kind === 'ai' }, 'An AI-generated character (not a real person)'), h('option', { value: 'real', selected: kind === 'real' }, 'A real person who has agreed to appear')),
+    kind === 'real' ? h('label', { style: 'display:flex;gap:8px;align-items:flex-start;color:var(--text)' }, h('input', { type: 'checkbox', style: 'width:auto;margin-top:3px', checked: attest, onchange: (e) => (attest = e.target.checked) }),
+      h('span', {}, 'This person has genuinely used the product and the opinions are theirs. (Only then may ads say "I tried it" or describe personal results.)')) : null,
+    h('p', { class: 'small' }, kind === 'ai' ? 'An AI character has not used your product, so its ads are written as demos or recommendations, never as a personal review (FTC endorsement rules). Posts should use the platform\'s AI label.' : 'Keep written consent from this person, including for use of their likeness in AI-generated video.'));
+  draw();
+  return { el: box, read: () => ({ kind, attestUsed: kind === 'real' && attest }) };
+}
+
 function librarySection(kind, noun, hint) {
   const draft = { name: '', description: '', images: [] };
   const thumbs = h('div', { class: 'thumbs' });
@@ -26,7 +41,7 @@ function librarySection(kind, noun, hint) {
   }) });
   const name = h('input', { placeholder: `${noun} name` });
   const desc = h('textarea', { placeholder: kind === 'actors' ? 'Look, age, vibe, voice… (helps the composer write for them)' : 'What it is, key benefits, who it is for…' });
-  const details = kind === 'products' ? productDetails() : null;
+  const details = kind === 'products' ? productDetails() : actorDetails();
   const redraw = () => thumbs.replaceChildren(...draft.images.map((u) => h('img', { src: u, alt: '' })));
   const importer = kind !== 'products' ? null : (() => {
     const url = h('input', { placeholder: 'https://yourshop.com/products/your-product' });
@@ -46,12 +61,12 @@ function librarySection(kind, noun, hint) {
       }) }, 'Import'), out);
   })();
   const form = h('div', { class: 'panel', style: 'max-width:520px;margin-bottom:16px' },
-    h('label', {}, 'Name'), name, h('label', {}, 'Description'), desc, details ? details.el : null,
+    h('label', {}, 'Name'), name, h('label', {}, 'Description'), desc, details.el,
     h('label', {}, 'Images (up to 4, first one is used for generation)'),
     h('div', { class: 'dz', role: 'button', tabindex: '0', onclick: () => input.click() }, 'Click to choose images'), input, thumbs,
     h('p', { class: 'small' }, hint),
     h('button', { class: 'primary', onclick: guard(async () => {
-      await api('POST', kind, { name: name.value, description: desc.value, images: draft.images, url: draft.url, ...(details ? details.read() : {}) });
+      await api('POST', kind, { name: name.value, description: desc.value, images: draft.images, url: draft.url, ...details.read() });
       toast(`${noun} saved`); await refreshLight(); render();
     }) }, `Save ${noun.toLowerCase()}`));
   const items = state[kind];
@@ -59,7 +74,7 @@ function librarySection(kind, noun, hint) {
   const host = h('section', { style: 'margin-bottom:32px' });
   const rerender = () => host.replaceChildren(...build().children);
   const editForm = (it) => {
-    const d = productDetails(it), nm = h('input', { value: it.name }), ds = h('textarea', {}, it.description || '');
+    const d = kind === 'products' ? productDetails(it) : actorDetails(it), nm = h('input', { value: it.name }), ds = h('textarea', {}, it.description || '');
     return h('div', { class: 'body' }, h('label', {}, 'Name'), nm, h('label', {}, 'Description'), ds, d.el,
       h('button', { class: 'primary', style: 'margin-top:10px', onclick: guard(async () => { await api('PUT', `${kind}/${it.id}`, { name: nm.value, description: ds.value, ...d.read() }); toast('Saved'); await refreshLight(); render(); }) }, 'Save'));
   };
@@ -67,9 +82,9 @@ function librarySection(kind, noun, hint) {
     h('h2', {}, kind === 'actors' ? 'Actors' : 'Products'), importer, form,
     items.length ? h('div', { class: 'grid' }, items.map((it) => h('div', { class: 'card' },
       h('img', { src: `/files/uploads/${it.images[0]}`, alt: it.name }),
-      h('div', { class: 'body' }, h('h3', {}, it.name), h('p', {}, it.description || '')),
+      h('div', { class: 'body' }, h('h3', {}, it.name), kind === 'actors' ? h('span', { class: 'tag ' + (it.kind === 'real' ? (it.attestUsed ? 'live' : 'est') : '') }, it.kind === 'real' ? (it.attestUsed ? 'Real person · has used it' : 'Real person') : 'AI character') : null, h('p', {}, it.description || '')),
       editing === it.id ? editForm(it) : null,
-      h('div', { class: 'actions' }, kind === 'products' ? h('button', { onclick: () => { editing = editing === it.id ? null : it.id; rerender(); } }, 'Edit details') : null, h('button', { onclick: guard(async () => {
+      h('div', { class: 'actions' }, h('button', { onclick: () => { editing = editing === it.id ? null : it.id; rerender(); } }, 'Edit details'), h('button', { onclick: guard(async () => {
         if (!confirm(`Delete ${it.name}?`)) return;
         await api('DELETE', `${kind}/${it.id}`); await refreshLight(); render();
       }) }, 'Delete'))))) : h('div', { class: 'empty' }, `No ${kind} yet.`));
