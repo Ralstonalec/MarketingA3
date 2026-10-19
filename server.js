@@ -6,9 +6,12 @@ try { process.loadEnvFile(path.join(__dirname, '.env')); } catch {}
 
 const store = require('./lib/store');
 const settings = require('./lib/settings');
-const providers = require('./lib/providers');
 const pipeline = require('./lib/pipeline');
-const copywriter = require('./lib/copywriter');
+const composer = require('./lib/composer');
+const catalog = require('./lib/catalog');
+const openrouter = require('./lib/openrouter');
+const engines = require('./lib/engines');
+const ledger = require('./lib/ledger');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -93,6 +96,30 @@ function entityRoutes(kind) {
 }
 const entities = { products: entityRoutes('products'), actors: entityRoutes('actors') };
 
+// A concept's scenes become one job each, priced and budget-checked together before any starts.
+function createBatch(b) {
+  const scenes = Array.isArray(b.scenes) ? b.scenes.slice(0, 8) : [];
+  if (!scenes.length) throw Object.assign(new Error('No scenes to generate'), { code: 400 });
+  const total = scenes.reduce((n, sc) => n + pipeline.quoteFor({ ...b, duration: sc.seconds || b.duration }).usd, 0);
+  ledger.assertBudget(total);
+  const campaignId = store.id('camp');
+  return scenes.map((sc, i) => pipeline.create({ ...b, scene: sc, duration: sc.seconds || b.duration, campaignId, title: `${b.title || 'Ad'} · scene ${i + 1}` }));
+}
+
+// Submits one real request so you can see the provider's raw reply and fix the call config. May be billed.
+async function testModel(id) {
+  const model = catalog.get(id);
+  if (model.kind === 'text') {
+    const r = await openrouter.chat({ model: model.orId, messages: [{ role: 'user', content: 'Reply with the single word: ok' }], maxTokens: 16 });
+    if (r.usd != null) ledger.record({ kind: 'text', model: model.id, usd: r.usd, basis: 'actual', note: 'model test' });
+    return { ok: true, reply: r.text.slice(0, 80), usd: r.usd };
+  }
+  if (model.engine !== 'http') throw Object.assign(new Error('Only custom-call models can be tested here'), { code: 400 });
+  const px = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const r = await engines.start(model, model.kind, { prompt: 'test', ratio: '1:1', duration: 5, imageUri: px, refs: [{ tag: 'actor', uri: px }, { tag: 'product', uri: px }], dryRun: true });
+  return { ok: true, submitResponse: r.raw, note: 'Submitted. This may be billed by the provider; check your dashboard.' };
+}
+
 // ---- router -----------------------------------------------------------------
 async function api(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean).slice(1); // drop "api"
@@ -100,30 +127,44 @@ async function api(req, res, url) {
   const m = req.method;
 
   if (root === 'settings') {
-    if (m === 'GET') return send(res, 200, { ...settings.publicSettings(), providers: providers.list() });
-    if (m === 'PUT') return send(res, 200, { ...settings.update(await readJson(req)), providers: providers.list() });
+    if (m === 'GET') return send(res, 200, settings.publicSettings());
+    if (m === 'PUT') return send(res, 200, settings.update(await readJson(req)));
   }
   if (entities[root]) {
     if (m === 'GET' && !idPart) return send(res, 200, entities[root].list());
     if (m === 'POST' && !idPart) return send(res, 201, await entities[root].create(await readJson(req)));
     if (m === 'DELETE' && idPart) return send(res, entities[root].remove(idPart) ? 200 : 404, { ok: true });
   }
-  if (root === 'copy' && m === 'POST') {
-    const b = await readJson(req);
-    const product = store.db.products.find((p) => p.id === b.productId);
-    const actor = store.db.actors.find((a) => a.id === b.actorId);
-    if (!product || !actor) throw Object.assign(new Error('Pick a product and an actor'), { code: 400 });
-    return send(res, 200, await copywriter.write({ product, actor, brief: b.brief, format: b.format }));
+
+  // Model ids contain "/" and ":", so they travel in the body or query string, not the path.
+  if (root === 'models') {
+    if (m === 'GET') return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() });
+    if (m === 'POST' && idPart === 'refresh') { await openrouter.refreshModels(); return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() }); }
+    if (m === 'POST' && !idPart) return send(res, 201, catalog.addModel(await readJson(req)));
+    if (m === 'PUT' && idPart === 'price') { const b = await readJson(req); return send(res, 200, catalog.setPrice(b.id, b.price)); }
+    if (m === 'DELETE') return send(res, 200, { ok: catalog.removeModel(url.searchParams.get('id')) });
+    if (m === 'POST' && idPart === 'test') return send(res, 200, await testModel((await readJson(req)).id));
   }
-  if (root === 'estimate' && m === 'POST') return send(res, 200, pipeline.estimate(await readJson(req)));
+  if (root === 'quote' && m === 'POST') {
+    try { return send(res, 200, catalog.quote(await readJson(req))); }
+    catch (e) { return send(res, 200, { error: e.message }); } // soft: the UI shows why there is no price yet
+  }
+  if (root === 'compose' && m === 'POST') return send(res, 200, await composer.compose(await readJson(req)));
+  if (root === 'ledger.csv' && m === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="spend.csv"' });
+    return res.end(ledger.csv());
+  }
+  if (root === 'spend' && m === 'GET') return send(res, 200, ledger.summary());
+  if (root === 'ledger' && m === 'GET') return send(res, 200, store.db.ledger.slice(-500).reverse());
   if (root === 'jobs') {
     if (m === 'GET') return send(res, 200, store.db.jobs);
+    if (m === 'POST' && idPart === 'batch') return send(res, 201, createBatch(await readJson(req)));
     if (m === 'POST' && !idPart) return send(res, 201, pipeline.create(await readJson(req)));
     if (m === 'POST' && action === 'retry') return send(res, 200, pipeline.retry(idPart));
     if (m === 'DELETE' && idPart) { pipeline.remove(idPart); return send(res, 200, { ok: true }); }
   }
   if (root === 'meta' && m === 'GET') {
-    return send(res, 200, { formats: Object.fromEntries(Object.entries(copywriter.FORMATS).map(([k, v]) => [k, v.label])), ratios: pipeline.RATIOS });
+    return send(res, 200, { formats: Object.fromEntries(Object.entries(composer.FORMATS).map(([k, v]) => [k, v.label])), platforms: composer.PLATFORMS, ratios: pipeline.RATIOS });
   }
   send(res, 404, { error: 'Not found' });
 }
