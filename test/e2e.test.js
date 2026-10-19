@@ -207,3 +207,53 @@ test('model test shows the raw submit response; validation and key safety', asyn
   const csv = await (await fetch(`${base}/api/ledger.csv`)).text();
   assert.match(csv, /^time,kind,model,usd,basis/);
 });
+
+test('autopilot: one call writes the ad and renders every scene with the default models', async () => {
+  await call('PUT', '/api/settings', { defaults: { text: 'or:acme/writer', image: 'or:acme/painter', video: 'hf:test-video' } });
+  const r = await call('POST', '/api/autopilot', { productId: prod.id, actorId: act.id, variants: 1, scenes: 2, brief: 'summer sale' });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.jobs.length, 2);
+  // text 0.0225 + 2 images x 0.039 + 2 videos x (0.12 x 5s)
+  assert.equal(r.body.quote.usd, 1.3005);
+  assert.equal(new Set(r.body.jobs.map((j) => j.campaignId)).size, 1);
+  for (const j of r.body.jobs) {
+    const done = await waitJob(j.id);
+    assert.equal(done.status, 'done', done.error);
+    assert.ok(done.video.file);
+  }
+});
+
+test('autopilot refuses over-budget runs before calling the writing model', async () => {
+  const spent = (await call('GET', '/api/spend')).body.month;
+  await call('PUT', '/api/settings', { budget: { monthlyUsd: spent + 0.5 } }); // run needs ~1.30
+  const writerCalls = () => orSeen.filter((j) => j.model === 'acme/writer').length;
+  const before = writerCalls();
+  const r = await call('POST', '/api/autopilot', { productId: prod.id, actorId: act.id, variants: 1, scenes: 2 });
+  assert.equal(r.status, 402);
+  assert.equal(writerCalls(), before); // nothing was spent on writing
+  await call('PUT', '/api/settings', { budget: { monthlyUsd: 0 } });
+});
+
+test('autopilot needs a default image model and a priced video model', async () => {
+  await call('PUT', '/api/settings', { defaults: { image: '' } });
+  const noImg = await call('POST', '/api/autopilot', { productId: prod.id, actorId: act.id });
+  assert.equal(noImg.status, 400);
+  assert.match(noImg.body.error, /default image model/);
+  await call('PUT', '/api/settings', { defaults: { image: 'mock:image', video: '' } });
+});
+
+test('login: username + password, constant-time check, lockout, open health check', async () => {
+  process.env.APP_USERNAME = 'Ralstonalec';
+  process.env.APP_PASSWORD = 'p$ss word';
+  const basic = (u, p) => ({ authorization: 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64') });
+  const get = (u, headers) => fetch(base + u, { headers });
+  try {
+    assert.equal((await get('/api/meta')).status, 401);
+    assert.equal((await get('/healthz')).status, 200);
+    assert.equal((await get('/api/meta', basic('Ralstonalec', 'p$ss word'))).status, 200);
+    assert.equal((await get('/api/meta', basic('someone', 'p$ss word'))).status, 401);   // wrong user
+    assert.equal((await get('/api/meta', basic('Ralstonalec', 'nope'))).status, 401);    // wrong password
+    for (let i = 0; i < 10; i++) await get('/api/meta', basic('Ralstonalec', 'bad' + i));
+    assert.equal((await get('/api/meta', basic('Ralstonalec', 'p$ss word'))).status, 429); // locked out even with the right password
+  } finally { delete process.env.APP_USERNAME; delete process.env.APP_PASSWORD; }
+});

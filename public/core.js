@@ -1,6 +1,6 @@
 'use strict';
 const state = {
-  view: 'compose', products: [], actors: [], jobs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
+  view: 'quick', products: [], actors: [], jobs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
   compose: { productId: null, actorId: null, platform: 'tiktok', format: 'ugc', tone: 'energetic, authentic', cta: 'Shop now', brief: '', variants: 2, scenes: 2, sceneSeconds: 5, textModel: null, result: null, busy: false },
   studio: { productId: null, actorId: null, imagePrompt: '', motionPrompt: '', ratio: '9:16', duration: 5, withVideo: false, imageModel: null, videoModel: null },
 };

@@ -9,6 +9,10 @@ node server.js            # http://127.0.0.1:3000
 npm test
 ```
 
+## Quick Ad (the fast way)
+
+Pick a product and an actor, optionally type an idea, and click **Write & render my ad**. The app writes the concept with your default writing model, then renders every scene with your default image/video models. The full price is shown first, and your monthly budget cap is checked for the whole run before anything is spent. Set the defaults once on the Models page (*Make default*). The first-run checklist on the Quick Ad screen shows what's left to set up.
+
 ## Quick start
 
 1. **Settings**: paste your OpenRouter key (and Higgsfield key). Optionally set a monthly budget.
@@ -48,6 +52,13 @@ Models page → *Add Higgsfield / custom model*. Each model is a name, a price a
 **The Higgsfield and OpenRouter-video templates are starting points, not verified configs.** They were written without access to those providers' docs, so check the model path, auth header format, request fields and result path against Higgsfield's API documentation and use Test before relying on them.
 
 Keys: `OPENROUTER_API_KEY`, `HIGGSFIELD_KEY`, `CUSTOM_API_KEY` override the Settings page. See `.env.example`.
+
+## Login and hosting
+
+- **Local use:** no login is needed; the app listens on `127.0.0.1` only.
+- **Hosted use:** set `APP_USERNAME` and `APP_PASSWORD`. The browser shows a login prompt; repeated wrong guesses lock that IP out for 5 minutes. With `HOST=0.0.0.0` and no `APP_PASSWORD`, the app **refuses to start**, because it spends money on your keys.
+- Set the credentials as **environment variables on the host**, never in the repo. If your password contains `$`, wrap it in single quotes in a shell (`'pa$$word'`); host dashboards take it as typed.
+- A `Dockerfile` is included. Mount a persistent volume at `/data` (database, photos, results live there), expose port 3000, and use `/healthz` for health checks. Always serve over HTTPS (Railway, Render and Fly.io do this for you); basic auth is only safe over HTTPS.
 
 ## Notes
 
