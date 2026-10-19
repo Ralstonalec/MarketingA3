@@ -328,8 +328,14 @@ if (require.main === module) {
     console.error(`Refusing to listen on ${HOST} without APP_PASSWORD set. Set APP_USERNAME and APP_PASSWORD.`);
     process.exit(1);
   }
+  server.on('error', (e) => {
+    if (e.code !== 'EADDRINUSE') throw e;
+    // The usual reason a page "looks the same": an older copy is still running on this port and keeps answering.
+    console.error(`\nPort ${PORT} is already in use. An older copy of Marketing A3 (or another program) is still running there,\nwhich is why the page may look unchanged.\n\n  Close it, or start this copy on another port:   PORT=3001 node server.js\n`);
+    process.exit(1);
+  });
   server.listen(PORT, HOST, () => {
-    console.log(`Marketing A3 running at http://${HOST}:${PORT}`);
+    console.log(`Marketing A3 (build ${buildId()}) running at http://${HOST}:${PORT}\nServing files from ${__dirname}`);
     pipeline.resumeAll();
     runs.resumeAll();
     sync.start(); // keeps model lists and prices current in the background

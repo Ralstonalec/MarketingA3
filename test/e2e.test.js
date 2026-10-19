@@ -1031,3 +1031,21 @@ test('the page tells you which build you are running and never serves stale file
   assert.equal(css.headers.get('cache-control'), 'no-cache');
   assert.equal((await fetch(base + '/index.html')).status, 200);
 });
+
+test('safe fetch works on real HOSTNAMES (pinned lookup shape), not just IP literals', async () => {
+  const { pinnedLookup, safeGet } = require('../lib/safefetch');
+  const ip = { address: '127.0.0.1', family: 4 };
+  // both call forms Node uses must be answered correctly
+  const all = await new Promise((r) => pinnedLookup(ip)('x', { all: true }, (...a) => r(a)));
+  assert.deepEqual(all, [null, [{ address: '127.0.0.1', family: 4 }]]);
+  const one = await new Promise((r) => pinnedLookup(ip)('x', {}, (...a) => r(a)));
+  assert.deepEqual(one, [null, '127.0.0.1', 4]);
+  // and end to end through a hostname, which is the path that failed with ERR_INVALID_IP_ADDRESS
+  process.env.A3_ALLOW_LOOPBACK_URL_IMPORT = '1';
+  const srv = http.createServer((q, r) => { r.writeHead(200, { 'content-type': 'text/plain' }); r.end('hello'); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const res = await safeGet(`http://localhost:${srv.address().port}/`);
+    assert.equal(res.body.toString(), 'hello');
+  } finally { srv.close(); delete process.env.A3_ALLOW_LOOPBACK_URL_IMPORT; }
+});
