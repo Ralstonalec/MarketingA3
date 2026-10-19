@@ -71,7 +71,7 @@ function hookBox(c) {
   let count = 3;
   const out = h('div', {});
   const noModel = !st.textModel;
-  const qb = noModel ? null : quoteBox(() => ({ textModel: st.textModel, textCalls: 1 }));
+  const qb = noModel ? null : quoteBox(() => ({ textModel: st.textModel, textCalls: 1, textPurpose: 'hooks' }));
   const go = h('button', { class: 'primary', disabled: noModel, onclick: guard(async (e) => {
     e.target.disabled = true; e.target.textContent = 'Writing hooks…';
     try {

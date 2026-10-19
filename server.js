@@ -19,6 +19,8 @@ const importer = require('./lib/importer');
 const runs = require('./lib/runs');
 const knowledge = require('./lib/knowledge');
 const openapi = require('./lib/openapi');
+const accounts = require('./lib/accounts');
+const sync = require('./lib/sync');
 const { safeGet } = require('./lib/safefetch');
 const postkit = require('./lib/postkit');
 
@@ -176,7 +178,7 @@ async function api(req, res, url) {
 
   // Model ids contain "/" and ":", so they travel in the body or query string, not the path.
   if (root === 'models') {
-    if (m === 'GET') return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() });
+    if (m === 'GET') return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all(), changes: store.db.priceChanges.slice(0, 30), sync: store.db.syncLog });
     if (m === 'POST' && idPart === 'openapi' && action === 'preview') {
       const b = await readJson(req);
       let spec = b.spec;
@@ -189,8 +191,9 @@ async function api(req, res, url) {
     if (m === 'POST' && idPart === 'openapi' && action === 'import') {
       const b = await readJson(req), added = [];
       for (const d of (Array.isArray(b.drafts) ? b.drafts : []).slice(0, 200)) {
-        added.push(catalog.addModel({ provider: b.provider || 'higgsfield', kind: d.kind, label: d.label, price: null, inputs: d.inputs, http: d.http, estimate: d.estimate, limits: d.limits, notes: d.attention }));
+        added.push(catalog.addModel({ provider: b.provider || 'higgsfield', kind: d.kind, label: d.label, price: null, inputs: d.inputs, http: d.http, estimate: d.estimate, limits: d.limits, notes: d.attention, source: b.specUrl ? { type: 'openapi', url: b.specUrl, path: d.path } : undefined }));
       }
+      if (b.specUrl && (b.provider || 'higgsfield') === 'higgsfield') settings.update({ sync: { higgsfieldSpecUrl: b.specUrl } }); // remembered, so Sync can re-read it
       return send(res, 201, { added: added.length, models: added.map((x) => ({ id: x.id, label: x.label, kind: x.kind })) });
     }
     if (m === 'POST' && idPart === 'estimate') {
@@ -203,12 +206,31 @@ async function api(req, res, url) {
       }
       return send(res, 200, { results: out });
     }
-    if (m === 'POST' && idPart === 'refresh') { await openrouter.refreshModels(); return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() }); }
+    if (m === 'POST' && idPart === 'refresh') { const r = await sync.syncOpenRouter(); return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all(), changes: store.db.priceChanges.slice(0, 30), sync: store.db.syncLog, summary: r }); }
+    if (m === 'POST' && idPart === 'sync') {
+      const b = await readJson(req), want = b.provider || 'all', out = {};
+      if (['openrouter', 'all'].includes(want) && settings.getKey('openrouter')) out.openrouter = await sync.syncOpenRouter().catch((e) => ({ error: e.message }));
+      if (['higgsfield', 'all'].includes(want) && store.db.settings.sync.higgsfieldSpecUrl) out.higgsfield = await sync.syncHiggsfield().catch((e) => ({ error: e.message }));
+      if (!Object.keys(out).length) throw Object.assign(new Error('Nothing to sync yet. Add an OpenRouter key, or import the Higgsfield spec once.'), { code: 400 });
+      return send(res, 200, { results: out, models: catalog.all(), changes: store.db.priceChanges.slice(0, 30), sync: store.db.syncLog });
+    }
+    if (m === 'POST' && idPart === 'prefs') {
+      const b = await readJson(req);
+      if (typeof b.favorite === 'boolean') catalog.setPref(b.id, 'favorites', b.favorite);
+      if (typeof b.hidden === 'boolean') catalog.setPref(b.id, 'hidden', b.hidden);
+      return send(res, 200, catalog.get(b.id));
+    }
     if (m === 'POST' && !idPart) return send(res, 201, catalog.addModel(await readJson(req)));
     if (m === 'PUT' && idPart === 'price') { const b = await readJson(req); return send(res, 200, catalog.setPrice(b.id, b.price)); }
     if (m === 'DELETE') return send(res, 200, { ok: catalog.removeModel(url.searchParams.get('id')) });
     if (m === 'POST' && idPart === 'test') return send(res, 200, await testModel((await readJson(req)).id));
   }
+  if (root === 'accounts') {
+    if (m === 'GET' && !idPart) return send(res, 200, accounts.status());
+    if (m === 'POST' && idPart === 'test') return send(res, 200, await accounts.test((await readJson(req)).provider));
+    if (m === 'GET' && idPart === 'reconcile') return send(res, 200, await accounts.reconcile());
+  }
+  if (root === 'price-changes' && m === 'DELETE') { store.db.priceChanges = []; store.save(); return send(res, 200, { ok: true }); }
   if (root === 'quote' && m === 'POST') {
     try { return send(res, 200, catalog.quote(await readJson(req))); }
     catch (e) { return send(res, 200, { error: e.message }); } // soft: the UI shows why there is no price yet
@@ -292,6 +314,7 @@ if (require.main === module) {
     console.log(`Marketing A3 running at http://${HOST}:${PORT}`);
     pipeline.resumeAll();
     runs.resumeAll();
+    sync.start(); // keeps model lists and prices current in the background
   });
 }
 module.exports = { server };

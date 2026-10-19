@@ -14,14 +14,19 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 // ---- fake OpenRouter: /models, /chat/completions (text + image) -------------------
 const orSeen = [];
 const orScript = []; // queued raw replies for the writing model; empty = default valid reply
+const orState = { bump: 1, fail503: 0, fail429: 0 }; // price multiplier for the writer, and transient failures to inject
 const orServer = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
   req.on('end', () => {
     const send = (o, code = 200) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (req.headers.authorization !== 'Bearer or-key') return send({ error: { message: 'bad key' } }, 401);
+    if (req.url === '/auth/key') return send({ data: { label: 'test-key', usage: 1.2345, limit: null, is_free_tier: false } });
+    if (req.url === '/credits') return send({ data: { total_credits: 10, total_usage: 2.5 } });
+    if (req.url === '/models' && orState.fail503 > 0) { orState.fail503--; return send({ error: { message: 'busy' } }, 503); }
+    if (req.url === '/chat/completions' && orState.fail429 > 0) { orState.fail429--; return send({ error: { message: 'slow down' } }, 429); }
     if (req.url === '/models') {
       return send({ data: [
-        { id: 'acme/writer', name: 'Acme Writer', context_length: 8000, architecture: { input_modalities: ['text'], output_modalities: ['text'] }, pricing: { prompt: '0.000003', completion: '0.000015' } },
+        { id: 'acme/writer', name: 'Acme Writer', context_length: 8000, architecture: { input_modalities: ['text'], output_modalities: ['text'] }, pricing: { prompt: '0.000003', completion: String(0.000015 * orState.bump) } },
         { id: 'acme/painter', name: 'Acme Painter', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image', 'text'] }, pricing: { prompt: '0.0000003', completion: '0.00003', image: '0.001' } },
         { id: 'acme/embed', name: 'Embedder', architecture: { input_modalities: ['text'], output_modalities: ['embeddings'] }, pricing: { prompt: '0.1' } },
       ] });
@@ -42,6 +47,7 @@ const orServer = http.createServer((req, res) => {
 
 // ---- fake queue-style video API (Higgsfield/fal shape) --------------------------------
 const vidSeen = [];
+const estState = { mult: 1 };
 const polls = {};
 const vidServer = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
@@ -50,7 +56,7 @@ const vidServer = http.createServer((req, res) => {
     const port = vidServer.address().port;
     if (req.method === 'POST' && req.url.startsWith('/estimate/')) {
       const j = JSON.parse(body || '{}');
-      if (j.duration) return send({ credits: (0.5 * j.duration).toFixed(3), usd: (0.02 * j.duration).toFixed(3) });  // cost scales with length
+      if (j.duration) return send({ credits: (0.5 * j.duration).toFixed(3), usd: (0.02 * j.duration * estState.mult).toFixed(3) });  // cost scales with length
       return send({ credits: '1.500', usd: '0.094' });
     }
     if (req.method === 'POST') {
@@ -352,7 +358,7 @@ test('engine: polish pass adds one call and keeps a valid improvement', async ()
 
 test('engine: retries stop at the budget cap instead of overspending', async () => {
   const spent = (await call('GET', '/api/spend')).body.month;
-  await call('PUT', '/api/settings', { budget: { monthlyUsd: spent + 0.03 } }); // first call (est 0.0225) allowed; a retry is not
+  await call('PUT', '/api/settings', { budget: { monthlyUsd: spent + 0.02 } }); // first call (learned cost 0.0123) fits; after paying it, a retry (another 0.0123) does not
   const n0 = writerCalls().length;
   orScript.push(good({ hook: 'Guaranteed results' }), good());
   const r = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2 });
@@ -847,4 +853,167 @@ test('estimates refuse models that need a video/audio file and report provider e
     http: { submit: { url: `http://127.0.0.1:${vidServer.address().port}/run`, headers: {}, body: { audio_url: '{{audio}}' } }, resultPath: 'video.url' }, estimate: { url: `http://127.0.0.1:${vidServer.address().port}/estimate/x` } })).body;
   const r = (await call('POST', '/api/models/estimate', { id: m.id })).body.results[0];
   assert.equal(r.ok, false); assert.match(r.error, /real audio file/);
+});
+
+// ---- accounts, learned costs, preferences, price changes, sync ---------------------------------------
+test('learned costs: after enough real charges, quotes use what the provider actually charged', async () => {
+  const w = (await call('GET', '/api/models')).body.models.find((m) => m.id === 'or:acme/writer');
+  assert.ok(w.learned.compose.n >= 3, JSON.stringify(w.learned));
+  assert.equal(w.learned.compose.avgUsd, 0.0123);
+  let q = (await call('POST', '/api/quote', { textModel: 'or:acme/writer', textCalls: 2 })).body.lines[0];
+  assert.equal(q.basis, 'observed'); assert.equal(q.unitUsd, 0.0123); assert.ok(q.observedRuns >= 3);
+  // each purpose learns separately: a short hook call must not skew the full ad-writing average
+  q = (await call('POST', '/api/quote', { textModel: 'or:acme/writer', textPurpose: 'hooks' })).body.lines[0];
+  assert.equal(q.basis === 'observed' ? q.unitUsd : 0.0225, q.basis === 'observed' ? 0.0123 : 0.0225);
+  // switch learning off: back to the price-list estimate
+  await call('PUT', '/api/settings', { sync: { learnCosts: false } });
+  q = (await call('POST', '/api/quote', { textModel: 'or:acme/writer' })).body.lines[0];
+  assert.equal(q.basis, 'live'); assert.equal(q.unitUsd, 0.0225);
+  await call('PUT', '/api/settings', { sync: { learnCosts: true } });
+  // a price you typed always wins over learning
+  await call('PUT', '/api/models/price', { id: 'or:acme/writer', price: { in: 1, out: 1 } });
+  q = (await call('POST', '/api/quote', { textModel: 'or:acme/writer' })).body.lines[0];
+  assert.equal(q.basis, 'manual');
+  await call('PUT', '/api/models/price', { id: 'or:acme/writer', price: null });
+  // estimates never teach the app anything
+  const L = require('../lib/ledger'); const before = (await call('GET', '/api/models')).body.models.find((m) => m.id === 'or:acme/writer').learned.compose.n;
+  L.record({ kind: 'text', model: 'or:acme/writer', usd: 9, basis: 'estimate', purpose: 'compose' });
+  assert.equal((await call('GET', '/api/models')).body.models.find((m) => m.id === 'or:acme/writer').learned.compose.n, before);
+});
+
+test('model preferences (favorites, hidden) are stored on the server', async () => {
+  const f = (await call('POST', '/api/models/prefs', { id: 'or:acme/writer', favorite: true })).body;
+  assert.equal(f.favorite, true);
+  assert.equal((await call('POST', '/api/models/prefs', { id: 'or:acme/painter', hidden: true })).body.hidden, true);
+  const ms = (await call('GET', '/api/models')).body.models;
+  assert.equal(ms.find((m) => m.id === 'or:acme/writer').favorite, true);
+  assert.equal(ms.find((m) => m.id === 'or:acme/painter').hidden, true);
+  assert.equal((await call('POST', '/api/models/prefs', { id: 'nope', favorite: true })).status, 400);
+  await call('POST', '/api/models/prefs', { id: 'or:acme/painter', hidden: false });
+  await call('POST', '/api/models/prefs', { id: 'or:acme/writer', favorite: false });
+  assert.equal((await call('GET', '/api/models')).body.models.find((m) => m.id === 'or:acme/painter').hidden, false);
+});
+
+test('accounts: key test reports balance/usage; reconcile compares the provider figure with the ledger', async () => {
+  const t = (await call('POST', '/api/accounts/test', { provider: 'openrouter' })).body;
+  assert.equal(t.ok, true); assert.match(t.detail, /test-key/); assert.match(t.detail, /used \$1\.2345/); assert.match(t.detail, /balance \$7\.5/);
+  assert.equal((await call('GET', '/api/accounts')).body.openrouter.check.ok, true);
+  const r = (await call('GET', '/api/accounts/reconcile')).body;
+  assert.equal(r.providerUsageUsd, 1.2345); assert.equal(r.providerSource, 'this key'); assert.equal(r.balanceUsd, 7.5);
+  assert.equal(r.driftUsd, Math.round((1.2345 - r.ledgerUsd) * 1e6) / 1e6);
+  assert.equal(Math.round((r.ledgerActualUsd + r.ledgerEstimatedUsd) * 1e6) / 1e6, r.ledgerUsd);
+  // a rejected key is an answer, not a crash
+  await call('PUT', '/api/settings', { keys: { openrouter: 'wrong-key' } });
+  const bad = (await call('POST', '/api/accounts/test', { provider: 'openrouter' })).body;
+  assert.equal(bad.ok, false); assert.match(bad.detail, /401|bad key/);
+  await call('PUT', '/api/settings', { keys: { openrouter: 'or-key' } });
+  assert.equal((await call('POST', '/api/accounts/test', { provider: 'nope' })).status, 400);
+  await call('PUT', '/api/settings', { keys: { custom: null } });
+  assert.equal((await call('POST', '/api/accounts/test', { provider: 'custom' })).body.ok, false);                // no key set
+});
+
+test('refresh detects price moves, keeps the old list if the new one is empty, and retries transient errors', async () => {
+  await call('DELETE', '/api/price-changes');
+  orState.bump = 2;                                                                     // the writer's output price doubles
+  const r = await call('POST', '/api/models/refresh');
+  assert.equal(r.status, 200);
+  const ch = r.body.changes.find((c) => c.id === 'or:acme/writer');
+  assert.ok(ch, JSON.stringify(r.body.changes));
+  assert.equal(ch.from, 15); assert.equal(ch.to, 30); assert.equal(ch.pct, 100);
+  assert.equal(r.body.models.find((m) => m.id === 'or:acme/writer').price.out, 30);
+  assert.match(r.body.sync.openrouter.summary, /1 price change/);
+  assert.equal((await call('GET', '/api/models')).body.changes.length, 1);
+  orState.bump = 1; await call('POST', '/api/models/refresh');                         // moves back: another change is recorded
+  assert.equal((await call('GET', '/api/models')).body.changes.length, 2);
+  assert.equal((await call('DELETE', '/api/price-changes')).status, 200);
+  assert.equal((await call('GET', '/api/models')).body.changes.length, 0);
+  // two 503s then success: the GET is retried
+  orState.fail503 = 2;
+  assert.equal((await call('POST', '/api/models/refresh')).status, 200);
+  assert.equal(orState.fail503, 0);
+  // a 429 on a paid chat call is retried, because "rate limited" means it was not processed
+  orState.fail429 = 1;
+  const n0 = writerCalls().length;
+  orScript.push(good());
+  const c = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2 });
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.equal(orState.fail429, 0);
+  assert.equal(writerCalls().length - n0, 1);                                           // only the processed call is recorded
+  // an auth failure is NOT retried
+  await call('PUT', '/api/settings', { keys: { openrouter: 'wrong-key' } });
+  const t0 = Date.now();
+  assert.equal((await call('POST', '/api/models/refresh')).status, 400);
+  assert.ok(Date.now() - t0 < 500);
+  await call('PUT', '/api/settings', { keys: { openrouter: 'or-key' } });
+});
+
+test('Higgsfield sync: new endpoints are added, changed ones updated, removed ones flagged, prices re-fetched and changes tracked', async () => {
+  process.env.A3_ALLOW_LOOPBACK_URL_IMPORT = '1';
+  const root = `http://127.0.0.1:${vidServer.address().port}`;
+  const ep = (summary, props, required) => ({ post: { summary, requestBody: { content: { 'application/json': { schema: { type: 'object', required, properties: props } } } } } });
+  const kling = (durations) => ep('Sync Kling image to video', { prompt: { type: 'string' }, image_url: { type: 'string' }, duration: { type: 'integer', enum: durations } }, ['prompt', 'image_url', 'duration']);
+  const spec = { openapi: '3.1.0', info: { title: 'x', version: '1' }, servers: [{ url: root }], components: { securitySchemes: { k: { type: 'apiKey', in: 'header', name: 'Authorization', description: 'Use `Key {id}:{secret}`.' } } },
+    paths: { '/sync/kling/image-to-video': kling([5, 10]), '/sync/soul/text-to-image': ep('Sync Soul text to image', { prompt: { type: 'string' } }, ['prompt']) } };
+  const specServer = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(spec)); });
+  await new Promise((r) => specServer.listen(0, '127.0.0.1', r));
+  const specUrl = `http://127.0.0.1:${specServer.address().port}/openapi.json`;
+  try {
+    const prev = (await call('POST', '/api/models/openapi/preview', { url: specUrl })).body;
+    await call('POST', '/api/models/openapi/import', { provider: 'higgsfield', specUrl, drafts: prev.drafts });
+    assert.equal((await call('GET', '/api/settings')).body.sync.higgsfieldSpecUrl, specUrl);      // remembered for next time
+    let r = (await call('POST', '/api/models/sync', { provider: 'higgsfield' })).body.results.higgsfield;
+    assert.equal(r.added, 0); assert.equal(r.updated, 0); assert.equal(r.missing, 0);              // nothing changed yet
+    assert.ok(r.prices.priced >= 2);                                                               // both new models priced from the provider (plus any earlier imported ones)
+    const price = async (label) => (await call('GET', '/api/models')).body.models.find((m) => m.label === label);
+    assert.equal((await price('Sync Kling image to video')).price.usd, 0.02);
+
+    // the provider changes: kling allows other lengths, soul disappears, a new model appears, and kling costs 50% more
+    spec.paths['/sync/kling/image-to-video'] = kling([6, 12]);
+    delete spec.paths['/sync/soul/text-to-image'];
+    spec.paths['/sync/new/upscale'] = ep('Sync New upscaler', { image_url: { type: 'string' } }, ['image_url']);
+    estState.mult = 1.5;
+    r = (await call('POST', '/api/models/sync', { provider: 'higgsfield' })).body;
+    const h = r.results.higgsfield;
+    assert.equal(h.added, 1); assert.equal(h.updated, 1); assert.equal(h.missing, 1);
+    const k = await price('Sync Kling image to video');
+    assert.deepEqual(k.limits.durations, [6, 12]);
+    assert.equal(k.price.usd, 0.03);                                                               // re-priced from the provider
+    assert.equal(k.price.basis, 'provider-estimate');
+    assert.equal((await price('Sync Soul text to image')).missing, true);                          // kept (your history, prices) but flagged
+    assert.equal((await price('Sync New upscaler')).priced, true);
+    const change = r.changes.find((c) => c.id === k.id);
+    assert.ok(change && change.from === 0.02 && change.to === 0.03 && change.pct === 50, JSON.stringify(r.changes));
+    // it comes back: flagged state is cleared
+    spec.paths['/sync/soul/text-to-image'] = ep('Sync Soul text to image', { prompt: { type: 'string' } }, ['prompt']);
+    const back = (await call('POST', '/api/models/sync', { provider: 'higgsfield' })).body.results.higgsfield;
+    assert.equal(back.restored, 1);
+    assert.equal((await price('Sync Soul text to image')).missing, false);
+    // a hand-typed price is never overwritten by a re-price
+    await call('PUT', '/api/models/price', { id: k.id, price: { usd: 0.5, unit: 'second' } });
+    estState.mult = 1;
+    await call('POST', '/api/models/sync', { provider: 'higgsfield' });
+    assert.equal((await price('Sync Kling image to video')).price.usd, 0.5);
+  } finally { specServer.close(); delete process.env.A3_ALLOW_LOOPBACK_URL_IMPORT; estState.mult = 1; }
+});
+
+test('background sync only does work that is due, and can be switched off', async () => {
+  const syncMod = require('../lib/sync');
+  await call('POST', '/api/models/refresh');                                          // OpenRouter just synced
+  assert.deepEqual(Object.keys(await syncMod.runDue()), []);                           // nothing is due right now
+  const later = await syncMod.runDue({ now: Date.now() + 13 * 3600 * 1000 });          // 13h later, default interval is 12h
+  assert.ok(later.openrouter && !later.openrouter.error, JSON.stringify(later));
+  await call('PUT', '/api/settings', { sync: { autoRefreshHours: 0 } });
+  assert.match((await syncMod.runDue({ now: Date.now() + 99 * 3600 * 1000 })).skipped, /off/);
+  assert.ok(Object.keys(await syncMod.runDue({ force: true })).includes('openrouter'));   // a manual run ignores the schedule
+  await call('PUT', '/api/settings', { sync: { autoRefreshHours: 12 } });
+  assert.equal((await call('PUT', '/api/settings', { sync: { autoRefreshHours: 999 } })).status, 400);
+  assert.equal((await call('PUT', '/api/settings', { sync: { higgsfieldSpecUrl: 'ftp://x' } })).status, 400);
+});
+
+test('the database file that holds API keys is owner-only', async () => {
+  if (process.platform === 'win32') return;
+  const st = require('../lib/store');
+  st.flush();
+  assert.equal(fs.statSync(path.join(st.DATA_DIR, 'db.json')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(st.DATA_DIR).mode & 0o777, 0o700);
 });
