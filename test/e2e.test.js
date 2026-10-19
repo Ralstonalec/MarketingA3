@@ -604,6 +604,17 @@ test('verification: redirects to the home page and unreadable pages are classifi
   assert.equal(held.hookWithinSeconds.trusted, true);           // a person's approval is not withdrawn by a failed fetch
 });
 
+test('verification: a cited domain that does not exist is dead; a temporary DNS failure is not', async () => {
+  const knowledgeMod = require('../lib/knowledge');
+  const gone = await knowledgeMod.verifySources({ fetcher: async () => { throw new Error('getaddrinfo ENOTFOUND made-up-source.example'); } });
+  assert.ok(gone.results.every((r) => r.status === 'dead'));
+  const flaky = await knowledgeMod.verifySources({ fetcher: async () => { throw new Error('getaddrinfo EAI_AGAIN seller-us.tiktok.com'); } });
+  assert.ok(flaky.results.every((r) => r.status === 'unreachable'));
+  // restore a healthy verification so later tests see the pack's sourced rules
+  const text = 'Advice for sellers about making product videos that people enjoy watching and trust. '.repeat(12);
+  await knowledgeMod.verifySources({ fetcher: async (url) => ({ url, body: Buffer.from(`<html><body><p>${text}</p><p>between 15 and 45 seconds</p></body></html>`) }) });
+});
+
 test('post kit: caption, hashtags and a checklist that includes sourced pack rules', async () => {
   const concept = (await call('POST', '/api/compose', { productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' })).body.concepts[0];
   const kit = (await call('POST', '/api/postkit', { platform: 'tiktok_shop', concept, actorId: act.id, sponsored: true })).body;

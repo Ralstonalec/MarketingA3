@@ -45,6 +45,72 @@ function qualityBox(c) {
     notes.length ? h('div', { class: 'small' }, notes.map((w) => w.text).join(' · ')) : null);
 }
 
+const LEVEL_LABEL = { fix: ['unset', 'fix first'], law: ['unset', 'law'], policy: ['est', 'platform rule'], good_practice: ['', 'good practice'] };
+
+/** Copy-ready caption/hashtags plus the "before you post" checklist for the chosen platform. */
+function postKitBox(c) {
+  const box = h('div', {});
+  let sponsored = true;
+  const draw = async () => {
+    const kit = await api('POST', 'postkit', { platform: state.compose.platform, concept: c, actorId: state.compose.actorId, sponsored });
+    box.replaceChildren(
+      h('label', { style: 'display:flex;gap:8px;align-items:center;color:var(--text)' }, h('input', { type: 'checkbox', style: 'width:auto', checked: sponsored, onchange: guard(async (e) => { sponsored = e.target.checked; await draw(); }) }), 'This is a paid ad, a sponsored post, or has an affiliate link / gifted product'),
+      h('div', { class: 'quote' }, h('div', { class: 'small' }, 'Hashtags'), h('div', {}, kit.hashtags.join(' ')),
+        h('div', { class: 'small', style: 'margin-top:8px' }, 'Caption'), h('div', {}, kit.caption)),
+      h('div', { class: 'quote' }, h('div', { style: 'font-weight:600;margin-bottom:6px' }, 'Before you post'),
+        kit.checklist.map((x) => h('div', { style: 'display:flex;gap:8px;padding:3px 0;font-size:13px' }, h('span', { class: `tag ${(LEVEL_LABEL[x.level] || [''])[0]}`, style: 'height:fit-content' }, (LEVEL_LABEL[x.level] || ['', x.level])[1]),
+          h('span', {}, x.text, x.source && /^https:/.test(x.source) ? [' ', h('a', { href: x.source, target: '_blank', rel: 'noopener noreferrer', class: 'small' }, 'source')] : x.source ? h('span', { class: 'small' }, ` (${x.source})`) : null)))),
+      h('button', { class: 'sec', onclick: () => copyText(kit.text) }, 'Copy post kit'));
+  };
+  return { box, open: guard(draw) };
+}
+
+/** Alternative openings: re-render only scene 1 for each, which is far cheaper than whole ads. */
+function hookBox(c) {
+  const st = state.compose, r = c.render, box = h('div', {});
+  let count = 3;
+  const out = h('div', {});
+  const noModel = !st.textModel;
+  const qb = noModel ? null : quoteBox(() => ({ textModel: st.textModel, textCalls: 1 }));
+  const go = h('button', { class: 'primary', disabled: noModel, onclick: guard(async (e) => {
+    e.target.disabled = true; e.target.textContent = 'Writing hooks…';
+    try {
+      const res = await api('POST', 'hooks', { productId: st.productId, actorId: st.actorId, concept: c, platform: st.platform, textModel: st.textModel, count, tone: st.tone, cta: st.cta, brief: st.brief });
+      const sec = c.scenes[0].seconds;
+      const q = r.imageModel ? await api('POST', 'quote', { imageModel: r.imageModel, videoModel: r.withVideo ? r.videoModel : undefined, withVideo: r.withVideo, sceneSeconds: [sec] }) : { error: 'Pick an image model below first.' };
+      out.replaceChildren(h('div', { class: 'small' }, `Written by ${res.source} for ${money(res.usd)} (${res.basis}). Rendering one opening costs ${q.error ? '(choose models below)' : money(q.usd)}.`),
+        ...res.hooks.map((x) => h('div', { class: 'scene' }, h('div', { class: 'hook', style: 'font-size:15px' }, `“${x.hook}”`), h('div', { class: 'small' }, `${x.approach} · voiceover: ${x.voiceover}${x.onScreenText ? ' · on-screen: ' + x.onScreenText : ''}`),
+          x.notes && x.notes.length ? h('div', { class: 'small' }, x.notes.join(' · ')) : null,
+          h('button', { class: 'sec', style: 'margin-top:6px', disabled: !!q.error, onclick: guard(async () => {
+            await api('POST', 'jobs', { productId: st.productId, actorId: st.actorId, imageModel: r.imageModel, videoModel: r.withVideo ? r.videoModel : undefined, withVideo: r.withVideo, ratio: r.ratio, duration: sec,
+              scene: { imagePrompt: x.imagePrompt, motionPrompt: c.scenes[0].motionPrompt, voiceover: x.voiceover }, title: `Hook test: ${x.hook}`.slice(0, 110) });
+            toast('Rendering that opening. See the Gallery.'); await refreshLight();
+          }) }, 'Render this opening'))));
+      await refreshLight();
+    } finally { e.target.disabled = false; e.target.textContent = 'Write hook alternatives'; }
+  }) }, 'Write hook alternatives');
+  box.append(h('p', { class: 'small' }, 'Same ad, different first scene. Render only the opening of each to see which hook you prefer before paying for whole videos.'),
+    h('div', { class: 'row' }, h('div', { class: 'fit' }, h('label', {}, 'How many'), h('select', { onchange: (e) => (count = Number(e.target.value)) }, [2, 3, 4, 5].map((n) => h('option', { value: n, selected: n === 3 }, n)))), h('div', {}, noModel ? h('div', { class: 'small warn' }, 'Choose a writing model on the left first.') : qb.el)),
+    go, out);
+  if (qb) qb.update.now();
+  return { box };
+}
+
+/** Two small tools under each concept: the post kit and hook testing. Clicking a tab again closes it. */
+function toolTabs(c) {
+  const kit = postKitBox(c), hk = hookBox(c), holder = h('div', {});
+  let shown = null;
+  const row = h('div', { class: 'chips', style: 'margin:6px 0' });
+  const tab = (name, node, onOpen) => h('button', { type: 'button', class: 'chip', onclick: async () => {
+    shown = shown === name ? null : name;
+    holder.replaceChildren(...(shown ? [node] : []));
+    row.querySelectorAll('.chip').forEach((b) => b.classList.toggle('sel', b.textContent === shown));
+    if (shown && onOpen) await onOpen();
+  } }, name);
+  row.append(tab('Post kit', kit.box, kit.open), tab('Test hooks', hk.box));
+  return h('div', {}, row, holder);
+}
+
 function conceptCard(c, i) {
   const st = state.compose;
   const r = c.render || (c.render = defaultRender(st.platform));
@@ -53,6 +119,7 @@ function conceptCard(c, i) {
   return h('div', { class: 'concept' },
     h('div', { class: 'row', style: 'margin-bottom:4px' }, h('h3', {}, `${i + 1}. ${c.title}`), h('div', { class: 'fit chips' }, c.framework ? h('span', { class: 'tag' }, (state.meta.formats[c.framework] || c.framework)) : null, c.angle ? h('span', { class: 'tag' }, c.angle) : null, c.attempts > 1 ? h('span', { class: 'tag est', title: 'The first draft broke a rule, so the writer was asked to fix it' }, `fixed in ${c.attempts} tries`) : null)),
     qualityBox(c),
+    toolTabs(c),
     h('div', { class: 'hook' }, `“${c.hook}”`),
     h('label', {}, 'Script'), h('textarea', { oninput: (e) => (c.script = e.target.value) }, c.script),
     h('div', { class: 'row' },
@@ -67,7 +134,7 @@ function conceptCard(c, i) {
     h('div', { class: 'panel', style: 'margin-top:14px;background:var(--panel2)' }, h('h3', {}, 'Render this concept'),
       (ctrl = renderControls(r, {
         getScenes: () => c.scenes,
-        label: `Generate ${c.scenes.length} scene${c.scenes.length > 1 ? 's' : ''}`,
+        label: `Generate ${c.scenes.length} scene${c.scenes.length > 1 ? 's' : ''}${(c.warnings || []).some((w) => w.level === 'error') ? ' anyway (flagged issues above)' : ''}`,
         onGenerate: async () => {
           await api('POST', 'jobs/batch', { productId: st.productId, actorId: st.actorId, imageModel: r.imageModel, videoModel: r.withVideo ? r.videoModel : undefined, withVideo: r.withVideo, ratio: r.ratio, title: c.title, scenes: c.scenes });
           toast('Started. Watch progress in the Gallery.'); state.view = 'gallery'; await refreshLight(); render();
