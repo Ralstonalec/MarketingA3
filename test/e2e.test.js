@@ -49,9 +49,11 @@ const vidServer = http.createServer((req, res) => {
     const send = (o, code = 200) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
     const port = vidServer.address().port;
     if (req.method === 'POST') {
-      vidSeen.push({ auth: req.headers.authorization, j: JSON.parse(body) });
+      vidSeen.push({ auth: req.headers.authorization, idem: req.headers['idempotency-key'], j: JSON.parse(body) });
+      if (JSON.parse(body).prompt === 'NSFWTEST') return send({ request_id: 'r2', status_url: `http://127.0.0.1:${port}/status-nsfw` });
       return send({ request_id: 'r1', status_url: `http://127.0.0.1:${port}/status/r1`, response_url: `http://127.0.0.1:${port}/out/r1` });
     }
+    if (req.url === '/status-nsfw') return send({ status: 'nsfw' });
     if (req.url.startsWith('/status')) { polls[req.url] = (polls[req.url] || 0) + 1; return send({ status: polls[req.url] < 2 ? 'in_progress' : 'completed' }); }
     if (req.url.startsWith('/out')) return send({ video: { url: `http://127.0.0.1:${port}/file.mp4` } });
     res.writeHead(200, { 'content-type': 'video/mp4' }); res.end(Buffer.from('FAKEMP4'));
@@ -697,4 +699,52 @@ test('autopilot never renders a concept that still has unresolved problems', asy
   assert.equal(mixed.body.jobs.length, 2);
   for (const j of mixed.body.jobs) await waitJob(j.id);
   orScript.length = 0;
+});
+
+test('a moderated (nsfw) request fails clearly instead of polling forever, and costs nothing', async () => {
+  const ed = (await addTool('edit', 'Test Editor', { prompt: '{{prompt}}', image_url: '{{image}}' }, 0.07, 'run')).body;
+  const ledgerBefore = (await call('GET', '/api/spend')).body.total;
+  const r = (await call('POST', '/api/runs', { modelId: ed.id, prompt: 'NSFWTEST', image: { upload: prod.images[0] } })).body;
+  const done = await waitRun(r.id);
+  assert.equal(done.status, 'failed');
+  assert.match(done.error, /moderation/i);
+  assert.equal((await call('GET', '/api/spend')).body.total, ledgerBefore);       // failed and moderated requests are not charged
+});
+
+test('submits carry a fresh idempotency key placeholder so retries cannot double-bill', async () => {
+  const up = (await addTool('upscale', 'Idem Upscaler', { image_url: '{{image}}' }, 0.02, 'run')).body;
+  const withKey = await call('GET', '/api/models');
+  const m = withKey.body.models.find((x) => x.id === up.id);
+  // add the header the way a Higgsfield config would
+  m.http.submit.headers['Idempotency-Key'] = '{{idempotencyKey}}';
+  await call('POST', '/api/models', { provider: 'higgsfield', kind: 'upscale', label: 'Idem Upscaler', price: { usd: 0.02, unit: 'run' }, inputs: ['image'], http: m.http });
+  const a = (await call('POST', '/api/runs', { modelId: up.id, image: { upload: prod.images[0] } })).body;
+  const b = (await call('POST', '/api/runs', { modelId: up.id, image: { upload: prod.images[0] } })).body;
+  await waitRun(a.id); await waitRun(b.id);
+  const keys = vidSeen.slice(-2).map((x) => x.idem);
+  assert.ok(keys[0] && keys[1] && keys[0] !== keys[1]);
+});
+
+test('shipped starter packs pass their own evidence gate with nothing rejected, and load through the API', async () => {
+  const list = (await call('GET', '/api/knowledge/starters')).body;
+  assert.ok(list.some((x) => x.id === 'tiktok-2026-01'));
+  for (const st of list) {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'knowledge', st.id + '.json'), 'utf8'));
+    const rep = (await call('POST', '/api/knowledge/validate', { pack: raw })).body;
+    assert.deepEqual(rep.rejected, [], `${st.id}: ${JSON.stringify(rep.rejected)}`);
+  }
+  const r = await call('POST', '/api/knowledge', { starter: 'tiktok-2026-01' });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const k = (await call('GET', '/api/knowledge')).body;
+  const held = k.status.held.map((h) => h.field).sort();
+  assert.deepEqual(held, ['hookWithinSeconds', 'idealSeconds']);                   // numbers wait for verification
+  // the number-free advice is live immediately; the numbers are not
+  const n0 = writerCalls().length;
+  orScript.push(good());
+  await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' });
+  const prompt = writerCalls()[n0].messages[1].content;
+  assert.match(prompt, /Use large, easy-to-read on-screen text/);
+  assert.doesNotMatch(prompt, /Ideal length/);
+  assert.equal((await call('POST', '/api/knowledge', { starter: '../../etc/passwd' })).status, 404);
+  await call('DELETE', '/api/knowledge');
 });

@@ -72,6 +72,7 @@ async function loadKnowledge() { knowledgeState = await api('GET', 'knowledge');
 
 async function viewKnowledge() {
   await loadKnowledge();
+  const starters = await api('GET', 'knowledge/starters');
   const ta = h('textarea', { style: 'min-height:180px;font-family:monospace;font-size:12px', spellcheck: 'false', placeholder: 'Paste the contents of ad-knowledge.json here, or choose the file below', oninput: (e) => (kui.text = e.target.value) }, kui.text);
   const file = h('input', { type: 'file', accept: '.json,application/json', onchange: guard(async (e) => { const f = e.target.files[0]; if (f) { kui.text = await f.text(); kui.name = f.name; ta.value = kui.text; } }) });
   const parse = () => { try { return JSON.parse(kui.text); } catch (e) { throw new Error('That is not valid JSON: ' + e.message); } };
@@ -80,6 +81,9 @@ async function viewKnowledge() {
   show();
   return h('div', {}, h('h1', {}, 'Knowledge'), h('p', { class: 'sub' }, 'Load a research pack (platform rules, hook formulas, claim checks, disclosure and shop rules). Nothing is used unless it has a real source: items with no link, an internal or unpublished source, a bad year, or a broken pattern are rejected and listed here.'),
     knowledgeState.loaded ? [packSummary(knowledgeState), verifyView(), heldView(knowledgeState)] : h('div', { class: 'panel' }, h('b', {}, 'No research pack loaded. '), 'The writer is using its built-in conservative defaults. They never claim facts you did not provide, and never let an AI presenter claim personal use.'),
+    starters.length ? h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, 'Starter packs'), h('p', { class: 'small', style: 'margin-top:-8px' }, 'Shipped with the app. They contain only rules backed by a quote from the cited page. Press Verify sources afterwards to check them from this computer.'),
+      starters.map((st) => h('div', { class: 'row', style: 'padding:6px 0' }, h('div', {}, h('b', {}, st.id), h('div', { class: 'small' }, st.about)),
+        h('button', { class: 'sec fit', onclick: guard(async () => { await api('POST', 'knowledge', { starter: st.id }); toast('Starter pack loaded. Now press Verify sources.'); await loadKnowledge(); render(); }) }, 'Load')))) : null,
     h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, knowledgeState.loaded ? 'Replace the pack' : 'Load a pack'), ta, h('div', { style: 'margin-top:8px' }, file),
       h('div', { class: 'row', style: 'margin-top:12px' },
         h('button', { class: 'sec', onclick: guard(async () => { kui.report = await api('POST', 'knowledge/validate', { pack: parse() }); show(); }) }, 'Check only'),

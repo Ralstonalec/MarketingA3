@@ -6,7 +6,7 @@ function viewSettings() {
     const inp = h('input', { type: 'password', autocomplete: 'off', placeholder: k.set ? `${k.preview}${k.fromEnv ? ' (set by environment)' : ' (saved)'}` : 'Paste key' });
     return { name, inp, el: h('div', {}, h('label', {}, `${k.label} API key`), inp, hint ? h('div', { class: 'small', style: 'margin-top:4px' }, hint) : null) };
   };
-  const keys = [key('openrouter', 'Used for the writing models and OpenRouter image models.'), key('higgsfield', 'Check Higgsfield\'s dashboard for the exact key format (it may be KEY_ID:KEY_SECRET).'), key('custom', 'Only needed for self-hosted or other APIs that use {{apiKey}}.')];
+  const keys = [key('openrouter', 'Used for the writing models and OpenRouter image models.'), key('higgsfield', 'Create a key in console.higgsfield.ai. A credential is a key ID plus a secret; enter them as KEY_ID:SECRET. If requests return 401, compare with the format on Higgsfield\'s Authentication docs page.'), key('custom', 'Only needed for self-hosted or other APIs that use {{apiKey}}.')];
   const b = s.brand;
   const brand = { name: h('input', { value: b.name, placeholder: 'Your brand or business name' }), voice: h('input', { value: b.voice, placeholder: 'e.g. warm, witty, no hype, speaks like a friend' }),
     forbidden: h('input', { value: b.forbidden, placeholder: 'Words to never use in any ad, comma separated' }), defaultCta: h('input', { value: b.defaultCta, placeholder: 'e.g. Shop now at example.com' }) };

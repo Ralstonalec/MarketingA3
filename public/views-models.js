@@ -6,9 +6,9 @@ const ui = { modelKind: 'text', modelQuery: '', modelProvider: 'all', showAdd: f
 // ALWAYS check the provider's docs and use "Test" to see the real response before relying on one.
 const TEMPLATES = {
   higgsfield: {
-    note: 'Starting point only. Set the model path from Higgsfield\'s API docs, confirm the auth header format (your key may be KEY_ID:KEY_SECRET), then press Test to see the real response.',
-    image: { submit: { url: 'https://platform.higgsfield.ai/<model-path>', headers: { Authorization: 'Key {{apiKey}}' }, body: { prompt: '{{prompt}}', image_urls: '{{images}}', aspect_ratio: '{{ratio}}' } }, poll: { url: '{{submit.status_url}}', statusPath: 'status', resultUrl: '{{submit.response_url}}' }, resultPath: 'images.0.url' },
-    video: { submit: { url: 'https://platform.higgsfield.ai/<model-path>', headers: { Authorization: 'Key {{apiKey}}' }, body: { prompt: '{{prompt}}', image_url: '{{image}}', duration: '{{duration}}' } }, poll: { url: '{{submit.status_url}}', statusPath: 'status', resultUrl: '{{submit.response_url}}' }, resultPath: 'video.url' },
+    note: 'From Higgsfield\'s docs (docs.higgsfield.ai): base URL https://api.higgsfield.ai, header Authorization: Key <key id>:<secret> (confirm the exact format on their Authentication page), statuses queued / in_progress / completed / failed / nsfw / canceled, and the finished video at video.url. Failed and moderated requests are not charged. The submit path and body are different for every model: copy them from that model\'s page under docs.higgsfield.ai/docs/models. The image result path is not confirmed; use Test to see the real response.',
+    image: { submit: { url: 'https://api.higgsfield.ai/<model path from its docs page>', headers: { Authorization: 'Key {{apiKey}}', 'Idempotency-Key': '{{idempotencyKey}}' }, body: { prompt: '{{prompt}}' } }, poll: { url: '{{submit.status_url}}', statusPath: 'status', doneValues: ['completed'] }, resultPath: 'images.0.url' },
+    video: { submit: { url: 'https://api.higgsfield.ai/<model path from its docs page>', headers: { Authorization: 'Key {{apiKey}}', 'Idempotency-Key': '{{idempotencyKey}}' }, body: { prompt: '{{prompt}}', image_url: '{{image}}' } }, poll: { url: '{{submit.status_url}}', statusPath: 'status', doneValues: ['completed'] }, resultPath: 'video.url' },
   },
   openrouter: {
     note: 'OpenRouter video models are asynchronous. Check the OpenRouter video docs for the exact request fields, status values and result path, then press Test.',

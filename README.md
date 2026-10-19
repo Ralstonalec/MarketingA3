@@ -56,6 +56,10 @@ The **Tools** page runs any model you register on the Models page: image edit / 
 - **Budget**: a monthly cap blocks jobs and composer runs that would pass it, counting work already queued. `0` = no cap.
 - Export the full ledger from Spend as CSV.
 
+## Higgsfield (facts confirmed from its docs, 2026-01-19)
+
+Copied from docs.higgsfield.ai: base URL `https://api.higgsfield.ai`; `Authorization: Key <key id>:<secret>` (check the exact format on their Authentication page; legacy `hf-api-key` / `hf-secret` headers also work); one asynchronous lifecycle: submit, then poll the returned `status_url` until `completed` (statuses: `queued`, `in_progress`, `completed`, `failed`, `nsfw`, `canceled`); the finished video is at `video.url`; successful requests are charged in credits, **failed and `nsfw` requests are not charged**; output is kept for at least 7 days (this app saves your own copy). Each model has its own submit path and body, so copy those from the model's page and use **Test**. Submits send an `Idempotency-Key` when your config includes `"Idempotency-Key": "{{idempotencyKey}}"`, so a retried submit is not billed twice.
+
 ## Adding Higgsfield and other models
 
 Models page → *Add Higgsfield / custom model*. Each model is a name, a price and a JSON call config:
@@ -83,6 +87,10 @@ Keys: `OPENROUTER_API_KEY`, `HIGGSFIELD_KEY`, `CUSTOM_API_KEY` override the Sett
 - **Hosted use:** set `APP_USERNAME` and `APP_PASSWORD`. The browser shows a login prompt; repeated wrong guesses lock that IP out for 5 minutes. With `HOST=0.0.0.0` and no `APP_PASSWORD`, the app **refuses to start**, because it spends money on your keys.
 - Set the credentials as **environment variables on the host**, never in the repo. If your password contains `$`, wrap it in single quotes in a shell (`'pa$$word'`); host dashboards take it as typed.
 - A `Dockerfile` is included. Mount a persistent volume at `/data` (database, photos, results live there), expose port 3000, and use `/healthz` for health checks. Always serve over HTTPS (Railway, Render and Fly.io do this for you); basic auth is only safe over HTTPS.
+
+## Starter research packs
+
+`knowledge/*.json` ships rules that carry a quote and URL from the page they came from (Knowledge → Starter packs). Always press **Verify sources** after loading: it re-checks every quote against the live page from your computer and holds back anything it cannot confirm.
 
 ## Notes
 

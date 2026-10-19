@@ -196,11 +196,22 @@ async function api(req, res, url) {
   if (root === 'spend' && m === 'GET') return send(res, 200, ledger.summary());
   if (root === 'ledger' && m === 'GET') return send(res, 200, store.db.ledger.slice(-500).reverse());
   if (root === 'knowledge') {
-    if (m === 'GET') { const k = store.db.knowledge; return send(res, 200, k ? { loaded: true, meta: k.meta, pack: k.pack, status: knowledge.status() } : { loaded: false }); }
+    if (m === 'GET' && !idPart) { const k = store.db.knowledge; return send(res, 200, k ? { loaded: true, meta: k.meta, pack: k.pack, status: knowledge.status() } : { loaded: false }); }
     if (m === 'POST' && idPart === 'verify') return send(res, 200, await knowledge.verifySources());
     if (m === 'POST' && idPart === 'approve') { const b = await readJson(req); return send(res, 200, knowledge.approve(b.key, b.approved !== false)); }
     if (m === 'POST' && idPart === 'validate') return send(res, 200, knowledge.validate((await readJson(req)).pack).report);
-    if (m === 'POST' && !idPart) { const b = await readJson(req); try { return send(res, 201, knowledge.save(b.pack, b.name)); } catch (e) { return send(res, e.code || 400, { error: e.message, report: e.report }); } }
+    if (m === 'GET' && idPart === 'starters') {
+      const dir = path.join(__dirname, 'knowledge');
+      return send(res, 200, fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => ({ id: f.replace(/\.json$/, ''), about: (JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))._about || '').slice(0, 400) })) : []);
+    }
+    if (m === 'POST' && !idPart) {
+      const b = await readJson(req);
+      if (b.starter) { // packs shipped in knowledge/ (still go through the same evidence gate)
+        const file = path.join(__dirname, 'knowledge', path.basename(String(b.starter)) + '.json');
+        if (!fs.existsSync(file)) return send(res, 404, { error: 'Unknown starter pack' });
+        b.pack = JSON.parse(fs.readFileSync(file, 'utf8')); b.name = b.name || String(b.starter);
+      }
+      try { return send(res, 201, knowledge.save(b.pack, b.name)); } catch (e) { return send(res, e.code || 400, { error: e.message, report: e.report }); } }
     if (m === 'DELETE') { knowledge.clear(); return send(res, 200, { ok: true }); }
   }
   if (root === 'runs') {

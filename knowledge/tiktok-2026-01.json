@@ -1,0 +1,48 @@
+{
+  "_about": "Built only from page text a research agent copied verbatim on 2026-01-19. Each rule carries its URL and a quote. Run Verify sources before relying on it: the quotes are checked against the live pages from your machine. Deliberately NOT included: any sound-off percentage (the agent found none on TikTok's pages), hashtag counts, price-in-first-3-seconds, or 'AI labels are required' (the cited help page says TikTok 'encourages' labelling).",
+  "platformRules": {
+    "tiktok_shop": {
+      "source": "https://seller.tiktok.com/uk/blog/How%20to%20Create%20a%20High-Converting%20Product%20Showcase%20Video/10023290",
+      "idealSeconds": [15, 30],
+      "hookWithinSeconds": 2,
+      "textAdvice": "Use large, easy-to-read on-screen text to reinforce the key benefits, instructions and special offers.",
+      "soundAdvice": "Do not rely on voiceover alone: many TikTok users watch without sound, so the main message must also be readable on screen.",
+      "quotes": {
+        "idealSeconds": "O vídeo ideal de showcase de produto deve ter entre 15–30 segundos de comprimento",
+        "hookWithinSeconds": "Grab attention in 1–2 seconds!",
+        "textAdvice": "Use textos na tela para reforçar os pontos principais",
+        "soundAdvice": "assistem a vídeos sem som"
+      }
+    }
+  },
+  "disclosureRules": [
+    {
+      "platform": "tiktok",
+      "applies": "when a video is completely AI-generated or significantly edited by AI, including realistic people, places or events",
+      "action": "Use TikTok's AI-generated content label (a sticker or caption also works). TikTok's help page encourages creators to do this.",
+      "binding": "policy",
+      "source": "https://support.tiktok.com/en/using-tiktok/creating-videos/ai-generated-content",
+      "year": 2026,
+      "quote": "we encourage creators to label content that has been either completely generated or significantly edited by AI"
+    },
+    {
+      "platform": "tiktok_shop",
+      "applies": "when a product video is completely AI-generated or significantly edited by AI, including realistic people",
+      "action": "Use TikTok's AI-generated content label when posting. TikTok's help page encourages creators to do this.",
+      "binding": "policy",
+      "source": "https://support.tiktok.com/en/using-tiktok/creating-videos/ai-generated-content",
+      "year": 2026,
+      "quote": "we encourage creators to label content that has been either completely generated or significantly edited by AI"
+    }
+  ],
+  "shopRules": [
+    {
+      "platform": "tiktok_shop",
+      "rule": "Products on TikTok Shop's Prohibited Products Policy cannot be sold at all, and products on its Restricted Products Policy need prior approval (wording from TikTok Shop Brasil's seller page).",
+      "enforce": "Remind the seller to check the product against both TikTok Shop policies before making ads for it.",
+      "source": "https://seller.tiktok.com/br-en",
+      "year": 2026,
+      "quote": "Products listed under the TikTok Shop Prohibited Products Policy are strictly not allowed and cannot be sold under any circumstances."
+    }
+  ]
+}
