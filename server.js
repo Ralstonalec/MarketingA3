@@ -15,6 +15,8 @@ const openrouter = require('./lib/openrouter');
 const engines = require('./lib/engines');
 const ledger = require('./lib/ledger');
 const autopilot = require('./lib/autopilot');
+const importer = require('./lib/importer');
+const runs = require('./lib/runs');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -154,6 +156,7 @@ async function api(req, res, url) {
     if (m === 'GET') return send(res, 200, settings.publicSettings());
     if (m === 'PUT') return send(res, 200, settings.update(await readJson(req)));
   }
+  if (root === 'products' && idPart === 'import' && m === 'POST') return send(res, 200, await importer.importUrl(await readJson(req)));
   if (entities[root]) {
     if (m === 'GET' && !idPart) return send(res, 200, entities[root].list());
     if (m === 'POST' && !idPart) return send(res, 201, await entities[root].create(await readJson(req)));
@@ -182,6 +185,12 @@ async function api(req, res, url) {
   }
   if (root === 'spend' && m === 'GET') return send(res, 200, ledger.summary());
   if (root === 'ledger' && m === 'GET') return send(res, 200, store.db.ledger.slice(-500).reverse());
+  if (root === 'runs') {
+    if (m === 'GET') return send(res, 200, store.db.runs);
+    if (m === 'POST' && !idPart) return send(res, 201, runs.create(await readJson(req)));
+    if (m === 'POST' && action === 'retry') return send(res, 200, runs.retry(idPart));
+    if (m === 'DELETE' && idPart) { runs.remove(idPart); return send(res, 200, { ok: true }); }
+  }
   if (root === 'jobs') {
     if (m === 'GET') return send(res, 200, store.db.jobs);
     if (m === 'POST' && idPart === 'batch') return send(res, 201, pipeline.createBatch(await readJson(req)));
@@ -225,6 +234,7 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Marketing A3 running at http://${HOST}:${PORT}`);
     pipeline.resumeAll();
+    runs.resumeAll();
   });
 }
 module.exports = { server };

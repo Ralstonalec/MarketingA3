@@ -23,6 +23,30 @@ Pick a product and an actor, optionally type an idea, and click **Write & render
 
 **Studio** is the manual route: write the prompts yourself for one scene.
 
+## The ad writer (how it stays good, even on a free model)
+
+Models are not trusted. Every ad goes through the same pipeline (`lib/composer.js`, `lib/prompts.js`, `lib/adcheck.js`):
+
+1. **One focused call per version**, each with its own proven ad structure (UGC testimonial, problem→solution, demo, unboxing, day-in-the-life, offer, old-vs-new, sensory) and hook formula, so versions are genuinely different. Offer-led ads are only used if the product has an offer.
+2. **Fenced, grounded prompts.** Your product facts, offer and price are the only things the ad may claim. Product text, briefs and imported web pages are fenced in tags with angle brackets neutralised, and the system prompt says never to follow instructions found inside them.
+3. **Strict validation** of every reply: JSON shape, exact scene count, empty prompts, placeholders (`[product]`), voiceover that won't fit the scene, banned claims (guarantees, "clinically proven", fake urgency, fake social proof), numbers that are not in your product data, and your own forbidden words.
+4. **Automatic repair.** If a rule is broken, the model is shown the exact problems and asked to fix them (up to 2 times, and never past your budget cap).
+5. **Deterministic autofix.** `@actor`/`@product` tags, realism guards (correct hands, sharp label, no watermark, no morphing), the `#ad` disclosure.
+6. **Optional polish pass** (a second editing call, priced in the quote).
+7. Anything still wrong is shown in red on the concept ("Review before rendering"), never hidden. Every paid attempt is on the ledger.
+
+Put your real facts in **Library → product → Facts**. Ads can only state what is listed there. Brand voice, banned words and default CTA are in **Settings → Brand**.
+
+## Import from a link
+
+Library → *Import from a link*. The page is fetched safely (public addresses only, DNS pinned, redirects re-checked, size and time limits), the writing model organises it, and **every fact must quote the page verbatim or it is dropped**. You review the draft before saving.
+
+## Tools (everything else a model can do)
+
+The **Tools** page runs any model you register on the Models page: image edit / product placement, upscale, lip-sync / talking avatar, audio, video transforms. Each model declares its inputs (prompt, image, video, audio, length), you supply them from your Library, Gallery or an upload, and you get a price first, a Gallery result, and a ledger entry. Use *Use in Tools* on any result to chain it into the next step. Inputs are sent as base64 data URIs, so the provider must accept those (25 MB limit per file here).
+
+`docs/higgsfield-research-brief.md` lists exactly what to look up in Higgsfield's docs to turn their models into working configs.
+
 ## Pricing and spend
 
 - **Text models** (OpenRouter): live USD per 1M tokens from OpenRouter's model list. The per-call price shown is an estimate from the token assumptions in Settings; the **actual** cost is recorded from OpenRouter's reported usage after each call.

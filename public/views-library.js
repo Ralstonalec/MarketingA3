@@ -12,6 +12,7 @@ function productDetails(p = {}) {
     el: h('div', {}, h('label', {}, 'Facts the ad may state (one per line)'), f.facts,
       h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Audience'), f.audience), h('div', {}, h('label', {}, 'Price'), f.price)),
       h('label', {}, 'Current offer'), f.offer, h('label', {}, 'Never say'), f.forbidden),
+    fill: (d) => { f.facts.value = (d.facts || []).join('\n'); f.audience.value = d.audience || ''; f.offer.value = d.offer || ''; f.price.value = d.price || ''; },
     read: () => ({ facts: f.facts.value, audience: f.audience.value, offer: f.offer.value, price: f.price.value, forbidden: f.forbidden.value }),
   };
 }
@@ -21,18 +22,36 @@ function librarySection(kind, noun, hint) {
   const thumbs = h('div', { class: 'thumbs' });
   const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: guard(async (e) => {
     for (const f of [...e.target.files].slice(0, 4 - draft.images.length)) draft.images.push(await fileToDataUrl(f));
-    thumbs.replaceChildren(...draft.images.map((u) => h('img', { src: u, alt: '' })));
+    redraw();
   }) });
   const name = h('input', { placeholder: `${noun} name` });
   const desc = h('textarea', { placeholder: kind === 'actors' ? 'Look, age, vibe, voice… (helps the composer write for them)' : 'What it is, key benefits, who it is for…' });
   const details = kind === 'products' ? productDetails() : null;
+  const redraw = () => thumbs.replaceChildren(...draft.images.map((u) => h('img', { src: u, alt: '' })));
+  const importer = kind !== 'products' ? null : (() => {
+    const url = h('input', { placeholder: 'https://yourshop.com/products/your-product' });
+    const out = h('div', { class: 'small', style: 'margin-top:8px' });
+    const wm = state.settings.defaults.text && modelById(state.settings.defaults.text);
+    return h('div', { class: 'panel', style: 'max-width:520px;margin-bottom:16px' }, h('h2', {}, 'Import from a link'),
+      h('p', { class: 'small', style: 'margin-top:-8px' }, 'Paste a product page. You get a draft to review below. Only facts the page actually states are kept.'),
+      url, h('div', { class: 'small', style: 'margin:6px 0' }, wm ? `Uses ${wm.label} (small cost, shown in Spend).` : 'No default writing model set, so only the page\'s own details are read.'),
+      h('button', { class: 'primary', onclick: guard(async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Reading page…';
+        try {
+          const r = await api('POST', 'products/import', { url: url.value });
+          name.value = r.draft.name; desc.value = r.draft.description; details.fill(r.draft); draft.images = r.draft.images; draft.url = r.draft.url; redraw();
+          out.replaceChildren(h('div', {}, `Draft ready (read by ${r.extractedBy}${r.usd ? ', ' + money(r.usd) : ''}). Review it below, then save.`), ...r.notes.map((n) => h('div', { class: 'warn' }, n)));
+          await refreshLight();
+        } finally { e.target.disabled = false; e.target.textContent = 'Import'; }
+      }) }, 'Import'), out);
+  })();
   const form = h('div', { class: 'panel', style: 'max-width:520px;margin-bottom:16px' },
     h('label', {}, 'Name'), name, h('label', {}, 'Description'), desc, details ? details.el : null,
     h('label', {}, 'Images (up to 4, first one is used for generation)'),
     h('div', { class: 'dz', role: 'button', tabindex: '0', onclick: () => input.click() }, 'Click to choose images'), input, thumbs,
     h('p', { class: 'small' }, hint),
     h('button', { class: 'primary', onclick: guard(async () => {
-      await api('POST', kind, { name: name.value, description: desc.value, images: draft.images, ...(details ? details.read() : {}) });
+      await api('POST', kind, { name: name.value, description: desc.value, images: draft.images, url: draft.url, ...(details ? details.read() : {}) });
       toast(`${noun} saved`); await refreshLight(); render();
     }) }, `Save ${noun.toLowerCase()}`));
   const items = state[kind];
@@ -45,7 +64,7 @@ function librarySection(kind, noun, hint) {
       h('button', { class: 'primary', style: 'margin-top:10px', onclick: guard(async () => { await api('PUT', `${kind}/${it.id}`, { name: nm.value, description: ds.value, ...d.read() }); toast('Saved'); await refreshLight(); render(); }) }, 'Save'));
   };
   const build = () => h('div', {},
-    h('h2', {}, kind === 'actors' ? 'Actors' : 'Products'), form,
+    h('h2', {}, kind === 'actors' ? 'Actors' : 'Products'), importer, form,
     items.length ? h('div', { class: 'grid' }, items.map((it) => h('div', { class: 'card' },
       h('img', { src: `/files/uploads/${it.images[0]}`, alt: it.name }),
       h('div', { class: 'body' }, h('h3', {}, it.name), h('p', {}, it.description || '')),

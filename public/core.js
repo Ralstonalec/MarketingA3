@@ -1,7 +1,8 @@
 'use strict';
 const state = {
-  view: 'quick', products: [], actors: [], jobs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
+  view: 'quick', products: [], actors: [], jobs: [], runs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
   compose: { productId: null, actorId: null, platform: 'tiktok', framework: '', camera: '', look: '', polish: false, tone: 'energetic, authentic', cta: '', brief: '', variants: 2, scenes: 2, sceneSeconds: 5, textModel: null, result: null, busy: false },
+  tools: { modelId: null, prompt: '', duration: 5, ratio: '9:16', slots: {}, preset: null },
   studio: { productId: null, actorId: null, imagePrompt: '', motionPrompt: '', ratio: '9:16', duration: 5, withVideo: false, imageModel: null, videoModel: null },
 };
 
@@ -57,8 +58,8 @@ function fileToDataUrl(file, max = 1600) {
 
 // ---- data --------------------------------------------------------------------
 async function refreshLight() {
-  [state.products, state.actors, state.jobs, state.settings, state.spend] = await Promise.all([
-    api('GET', 'products'), api('GET', 'actors'), api('GET', 'jobs'), api('GET', 'settings'), api('GET', 'spend')]);
+  [state.products, state.actors, state.jobs, state.runs, state.settings, state.spend] = await Promise.all([
+    api('GET', 'products'), api('GET', 'actors'), api('GET', 'jobs'), api('GET', 'runs'), api('GET', 'settings'), api('GET', 'spend')]);
   renderSpendPill();
 }
 async function refreshModels() {
@@ -66,7 +67,7 @@ async function refreshModels() {
   state.models = r.models; state.modelsFetchedAt = r.fetchedAt;
 }
 const modelById = (id) => state.models.find((m) => m.id === id);
-const modelsOf = (kind) => state.models.filter((m) => m.kind === kind);
+const modelsOf = (kind) => state.models.filter((m) => [].concat(kind).includes(m.kind));
 
 function renderSpendPill() {
   const s = state.spend, el = document.getElementById('spendpill');
@@ -83,6 +84,7 @@ function priceText(m) {
   if (p.unit === 'tokens') return `${money(p.in)} in · ${money(p.out)} out per 1M tokens`;
   if (p.unit === 'image') return Number.isFinite(p.usd) ? `${money(p.usd)} / image` : `≈${money((p.completionPerM * a.imageOutTokens) / 1e6)} / image`;
   if (p.unit === 'second') return `${money(p.usd)} / second`;
+  if (p.unit === 'run') return `${money(p.usd)} / run`;
   return `${money(p.usd)} / video`;
 }
 function basisTag(m) {
@@ -93,7 +95,7 @@ function basisTag(m) {
 }
 
 // ---- model picker ------------------------------------------------------------
-function modelPicker({ kind, value, onChange, noneLabel }) {
+function modelPicker({ kind, value, onChange, noneLabel, filter = () => true }) {
   let open = false, q = '';
   const favs = () => new Set(lsGet('a3.favs', []));
   const root = h('div', { class: 'mp' });
@@ -106,7 +108,7 @@ function modelPicker({ kind, value, onChange, noneLabel }) {
   }
   function items() {
     const f = favs(), needle = q.trim().toLowerCase();
-    return modelsOf(kind)
+    return modelsOf(kind).filter(filter)
       .filter((m) => !needle || (m.label + ' ' + m.id).toLowerCase().includes(needle))
       .sort((a, b) => (f.has(b.id) - f.has(a.id)) || (b.priced - a.priced) || a.label.localeCompare(b.label))
       .slice(0, 80);
@@ -114,7 +116,7 @@ function modelPicker({ kind, value, onChange, noneLabel }) {
   function draw() {
     const m = cur();
     const btn = h('button', { type: 'button', class: 'mp-btn', 'aria-haspopup': 'listbox', 'aria-expanded': String(open), onclick: () => { open = !open; draw(); if (open) root.querySelector('input').focus(); } },
-      h('span', {}, m ? m.label : (noneLabel || `Choose a ${kind} model`), h('small', {}, m ? priceText(m) : kind === 'text' && noneLabel ? 'Free, no AI' : 'Price shows here')),
+      h('span', {}, m ? m.label : (noneLabel || `Choose a ${[].concat(kind).length > 1 ? '' : kind + ' '}model`), h('small', {}, m ? priceText(m) : kind === 'text' && noneLabel ? 'Free, no AI' : 'Price shows here')),
       m ? basisTag(m) : h('span', {}, '▾'));
     root.replaceChildren(btn);
     if (!open) return;
@@ -124,11 +126,11 @@ function modelPicker({ kind, value, onChange, noneLabel }) {
     for (const it of items()) {
       list.append(h('div', { class: 'mp-item' + (it.id === value ? ' sel' : ''), role: 'option', onclick: () => pick(it.id) },
         h('span', {}, h('button', { type: 'button', class: 'star' + (f.has(it.id) ? ' on' : ''), title: 'Favorite', 'aria-label': 'Toggle favorite', onclick: (e) => toggleFav(it.id, e) }, f.has(it.id) ? '★' : '☆'), it.label,
-          h('small', {}, `${it.provider} · ${it.id.replace(/^[a-z]+:/, '')}`)),
+          h('small', {}, `${it.provider} · ${[].concat(kind).length > 1 ? it.kind + ' · ' : ''}${it.id.replace(/^[a-z]+:/, '')}`)),
         h('span', { class: 'px' }, priceText(it), h('div', {}, basisTag(it)))));
     }
-    if (!list.children.length) list.append(h('div', { class: 'empty' }, state.models.some((x) => x.kind === kind) ? 'No matches' : `No ${kind} models yet. Add keys in Settings, then refresh in Models.`));
-    root.append(h('div', { class: 'mp-pop' }, h('input', { placeholder: `Search ${kind} models…`, value: q, oninput: (e) => { q = e.target.value; const pos = e.target.selectionStart; draw(); const i = root.querySelector('input'); i.focus(); i.setSelectionRange(pos, pos); } }), list));
+    if (!list.children.length) list.append(h('div', { class: 'empty' }, modelsOf(kind).filter(filter).length ? 'No matches' : 'No models yet. Add keys in Settings, refresh in Models, or add your own.'));
+    root.append(h('div', { class: 'mp-pop' }, h('input', { placeholder: 'Search models…', value: q, oninput: (e) => { q = e.target.value; const pos = e.target.selectionStart; draw(); const i = root.querySelector('input'); i.focus(); i.setSelectionRange(pos, pos); } }), list));
   }
   // composedPath: the clicked node may already have been replaced by draw(), so root.contains() would misjudge it.
   document.addEventListener('click', (e) => { if (open && !e.composedPath().includes(root)) { open = false; draw(); } });

@@ -35,14 +35,14 @@ function viewSettings() {
 }
 
 const NAV = [
-  ['sec', 'Create'], ['quick', 'Quick Ad'], ['compose', 'Ad Composer'], ['studio', 'Studio'], ['gallery', 'Gallery'],
+  ['sec', 'Create'], ['quick', 'Quick Ad'], ['compose', 'Ad Composer'], ['studio', 'Studio'], ['tools', 'Tools'], ['gallery', 'Gallery'],
   ['sec', 'Manage'], ['library', 'Library'], ['models', 'Models'], ['spend', 'Spend'], ['settings', 'Settings'],
 ];
 
 async function render() {
   document.getElementById('nav').replaceChildren(...NAV.map(([k, label]) => k === 'sec' ? h('div', { class: 'sec' }, label)
     : h('button', { class: state.view === k ? 'on' : '', onclick: () => { state.view = k; render(); } }, label)));
-  const views = { quick: viewQuick, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, spend: viewSpend, settings: viewSettings };
+  const views = { quick: viewQuick, tools: viewTools, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, spend: viewSpend, settings: viewSettings };
   const token = (render.token = (render.token || 0) + 1);
   const el = await views[state.view]();
   if (token === render.token) document.getElementById('main').replaceChildren(el);
@@ -51,9 +51,9 @@ document.getElementById('spendpill').addEventListener('click', () => { state.vie
 
 // Poll while any job is active. Only the Gallery re-renders, so typing elsewhere is never interrupted.
 setInterval(guard(async () => {
-  if (!state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) return;
+  if (![...state.jobs, ...state.runs].some((j) => j.status === 'queued' || j.status === 'running')) return;
   await refreshLight();
-  if (state.view === 'gallery') render();
+  if (state.view === 'gallery' || state.view === 'tools') render();
 }), 3000);
 
 guard(async () => {
