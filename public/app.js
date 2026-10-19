@@ -169,7 +169,26 @@ function gallery() {
   }));
 }
 
-// ---- settings --------------------------------------------------------------
+// ---- settings ----
+function parseCfg(text, label) {
+  if (!text.trim()) return null;
+  try { return JSON.parse(text); } catch (e) { throw new Error(`${label} config is not valid JSON: ${e.message}`); }
+}
+// Starting point only: model slugs and field names change, so check the provider's docs.
+const FAL_PRESET = {
+  image: {
+    submit: { url: 'https://queue.fal.run/fal-ai/flux-pro/kontext/multi', headers: { Authorization: 'Key {{apiKey}}' },
+      body: { prompt: '{{prompt}}', image_urls: '{{images}}', aspect_ratio: '{{ratio}}' } },
+    poll: { url: '{{submit.status_url}}', statusPath: 'status', resultUrl: '{{submit.response_url}}' },
+    resultPath: 'images.0.url',
+  },
+  video: {
+    submit: { url: 'https://queue.fal.run/fal-ai/kling-video/v2.1/standard/image-to-video', headers: { Authorization: 'Key {{apiKey}}' },
+      body: { prompt: '{{prompt}}', image_url: '{{image}}', duration: '{{duration|string}}' } },
+    poll: { url: '{{submit.status_url}}', statusPath: 'status', resultUrl: '{{submit.response_url}}' },
+    resultPath: 'video.url',
+  },
+};
 function settingsView() {
   const s = state.settings;
   const keyRow = (name, label) => {
@@ -179,6 +198,10 @@ function settingsView() {
   };
   const runway = keyRow('runway', 'Runway API key (dev.runwayml.com)');
   const anth = keyRow('anthropic', 'Anthropic API key (optional — AI-written ad concepts)');
+  const custom = keyRow('custom', 'API key for your custom models (sent as {{apiKey}} in your headers)');
+  const cfg = (st) => h('textarea', { style: 'min-height:200px;font-family:monospace;font-size:12px', spellcheck: false }, s.custom[st] ? JSON.stringify(s.custom[st], null, 2) : '');
+  const imgCfg = cfg('image'), vidCfg = cfg('video');
+  const preset = (label, p) => h('button', { class: 'sec', type: 'button', onclick: () => { imgCfg.value = JSON.stringify(p.image, null, 2); vidCfg.value = JSON.stringify(p.video, null, 2); toast(`${label} loaded — review, then Save`); } }, label);
   const prov = h('select', {}, s.providers.map((p) => h('option', { value: p.name, selected: p.name === s.provider }, p.label)));
   const model = h('input', { value: s.anthropicModel });
   const price = (k, l) => { const i = h('input', { type: 'number', step: '0.01', value: s.pricing[k] }); return { k, i, el: h('div', {}, h('label', {}, l), i) }; };
@@ -186,7 +209,12 @@ function settingsView() {
   return h('div', { class: 'panel', style: 'max-width:560px' },
     h('h2', {}, 'Settings'),
     h('label', {}, 'Generation provider'), prov,
-    runway.el, anth.el,
+    runway.el, anth.el, custom.el,
+    h('h3', { style: 'margin-top:24px' }, 'Custom models'),
+    h('p', { class: 'small' }, 'Describe how to call your image model (actor + product → keyframe) and your video model (keyframe → video). Placeholders: {{prompt}} {{ratio}} {{width}} {{height}} {{duration}} {{actorImage}} {{productImage}} {{images}} {{image}} {{apiKey}} {{submit.<field>}}. See README.'),
+    h('div', { class: 'chips' }, preset('Load fal.ai example', FAL_PRESET)),
+    h('label', {}, 'Image model config (JSON)'), imgCfg,
+    h('label', {}, 'Video model config (JSON)'), vidCfg,
     h('label', {}, 'Claude model for ad concepts'), model,
     h('h3', { style: 'margin-top:24px' }, 'Cost estimate rates'),
     h('p', { class: 'small' }, 'Estimates only — copy the numbers from your provider\'s pricing page.'),
@@ -195,7 +223,8 @@ function settingsView() {
     h('button', { class: 'primary', onclick: guard(async () => {
       await api('PUT', 'settings', {
         provider: prov.value, anthropicModel: model.value,
-        keys: { runway: runway.inp.value, anthropic: anth.inp.value },
+        keys: { runway: runway.inp.value, anthropic: anth.inp.value, custom: custom.inp.value },
+        custom: { image: parseCfg(imgCfg.value, 'Image'), video: parseCfg(vidCfg.value, 'Video') },
         pricing: Object.fromEntries(prices.map((p) => [p.k, p.i.value])),
       });
       toast('Saved'); await refresh(); render();

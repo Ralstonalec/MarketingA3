@@ -13,7 +13,7 @@ node server.js            # http://127.0.0.1:3000
 npm test
 ```
 
-Open **Settings**, choose **Runway**, and paste your key from <https://dev.runwayml.com> (or set `RUNWAY_API_KEY`; see `.env.example`). Until then the **Demo** provider produces free placeholder images so you can try the workflow.
+Open **Settings** and pick a provider: **Custom models** (your own endpoints, recommended), **Runway**, or **Demo** (free placeholder images, the default).
 
 ## How a generation works
 
@@ -25,7 +25,33 @@ Open **Settings**, choose **Runway**, and paste your key from <https://dev.runwa
 
 Results are downloaded to `data/outputs/` because provider URLs expire. Jobs persist and resume after a restart.
 
-## Adding another provider
+## Bring your own models (Custom provider)
+
+Settings → Custom models takes two JSON configs, one per stage:
+
+- **image**: actor + product references → keyframe. Placeholders: `{{prompt}} {{ratio}} {{width}} {{height}} {{actorImage}} {{productImage}} {{images}}` (both as an array).
+- **video**: keyframe → video. Placeholders: `{{prompt}} {{ratio}} {{width}} {{height}} {{duration}} {{image}}` (data URI).
+
+Common to both: `{{apiKey}}` (from the key field or `CUSTOM_API_KEY`) and `{{submit.<field>}}` (fields from the submit response). A value that is exactly one placeholder keeps its type; `{{duration|string}}` forces text.
+
+```json
+{
+  "submit": { "url": "https://queue.fal.run/<model>", "headers": { "Authorization": "Key {{apiKey}}" },
+              "body": { "prompt": "{{prompt}}", "image_url": "{{image}}", "duration": "{{duration|string}}" } },
+  "poll":   { "url": "{{submit.status_url}}", "statusPath": "status", "resultUrl": "{{submit.response_url}}" },
+  "resultPath": "video.url"
+}
+```
+
+- Omit `poll` for synchronous APIs: the result is read straight from the submit response.
+- `poll.resultUrl` (optional) is fetched after the status turns done, for APIs that serve results from a second URL.
+- `resultPath` is a dotted path (comma-separated fallbacks allowed) to the output URL; an array uses its first item.
+- Status values: done = `completed/succeeded/success/done/finished` (override with `poll.doneValues`); failed = `failed/error/canceled`.
+- Self-hosting (ComfyUI, Wan, LTX, Hunyuan, …): put a small HTTP wrapper in front of the model that accepts the JSON above and returns a result URL. Output URLs are downloaded to `data/outputs/`.
+
+**Load fal.ai example** in Settings fills in a starting point. Model slugs and field names change, so check the provider's docs before relying on it.
+
+## Adding a built-in provider
 
 Implement `startImage`, `startVideo`, `poll` in `lib/providers/<name>.js` (see `runway.js`), register it in `lib/providers/index.js`, and add its name to the allow-list in `lib/settings.js`.
 
