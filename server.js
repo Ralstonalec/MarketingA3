@@ -17,6 +17,8 @@ const ledger = require('./lib/ledger');
 const autopilot = require('./lib/autopilot');
 const importer = require('./lib/importer');
 const runs = require('./lib/runs');
+const knowledge = require('./lib/knowledge');
+const postkit = require('./lib/postkit');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -99,6 +101,11 @@ const lines = (v, max = 12) => (Array.isArray(v) ? v : String(v || '').split('\n
 function productFields(b) {
   return { facts: lines(b.facts), audience: String(b.audience || '').slice(0, 300), offer: String(b.offer || '').slice(0, 200), price: String(b.price || '').slice(0, 60), forbidden: String(b.forbidden || '').slice(0, 300), url: String(b.url || '').slice(0, 500) };
 }
+/** Who the presenter is matters legally: an AI character cannot give a first-person testimonial. */
+function actorFields(b) {
+  const kind = b.kind === 'real' ? 'real' : 'ai';
+  return { kind, attestUsed: kind === 'real' && b.attestUsed === true };
+}
 function entityRoutes(kind) {
   const list = () => store.db[kind];
   return {
@@ -108,7 +115,7 @@ function entityRoutes(kind) {
       if (!name) throw Object.assign(new Error('Name is required'), { code: 400 });
       if (!Array.isArray(body.images) || !body.images.length) throw Object.assign(new Error('Add at least one image'), { code: 400 });
       const images = body.images.slice(0, 4).map(store.saveDataUrl);
-      const item = { id: store.id(kind === 'products' ? 'prod' : 'act'), name, description: String(body.description || '').slice(0, 800), images, createdAt: new Date().toISOString(), ...(kind === 'products' ? productFields(body) : {}) };
+      const item = { id: store.id(kind === 'products' ? 'prod' : 'act'), name, description: String(body.description || '').slice(0, 800), images, createdAt: new Date().toISOString(), ...(kind === 'products' ? productFields(body) : actorFields(body)) };
       list().unshift(item); store.save();
       return item;
     },
@@ -118,6 +125,7 @@ function entityRoutes(kind) {
       if (typeof body.name === 'string' && body.name.trim()) item.name = body.name.trim().slice(0, 120);
       if (typeof body.description === 'string') item.description = body.description.slice(0, 800);
       if (kind === 'products') Object.assign(item, productFields({ ...item, ...body }));
+      else Object.assign(item, actorFields({ ...item, ...body }));
       store.save();
       return item;
     },
@@ -178,6 +186,8 @@ async function api(req, res, url) {
     catch (e) { return send(res, 200, { error: e.message }); } // soft: the UI shows why there is no price yet
   }
   if (root === 'autopilot' && m === 'POST') return send(res, 201, await autopilot.run(await readJson(req)));
+  if (root === 'hooks' && m === 'POST') return send(res, 200, await composer.hookVariants(await readJson(req)));
+  if (root === 'postkit' && m === 'POST') return send(res, 200, postkit.build(await readJson(req)));
   if (root === 'compose' && m === 'POST') return send(res, 200, await composer.compose(await readJson(req)));
   if (root === 'ledger.csv' && m === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="spend.csv"' });
@@ -185,6 +195,12 @@ async function api(req, res, url) {
   }
   if (root === 'spend' && m === 'GET') return send(res, 200, ledger.summary());
   if (root === 'ledger' && m === 'GET') return send(res, 200, store.db.ledger.slice(-500).reverse());
+  if (root === 'knowledge') {
+    if (m === 'GET') { const k = store.db.knowledge; return send(res, 200, k ? { loaded: true, meta: k.meta, pack: k.pack } : { loaded: false }); }
+    if (m === 'POST' && idPart === 'validate') return send(res, 200, knowledge.validate((await readJson(req)).pack).report);
+    if (m === 'POST' && !idPart) { const b = await readJson(req); try { return send(res, 201, knowledge.save(b.pack, b.name)); } catch (e) { return send(res, e.code || 400, { error: e.message, report: e.report }); } }
+    if (m === 'DELETE') { knowledge.clear(); return send(res, 200, { ok: true }); }
+  }
   if (root === 'runs') {
     if (m === 'GET') return send(res, 200, store.db.runs);
     if (m === 'POST' && !idPart) return send(res, 201, runs.create(await readJson(req)));
@@ -199,7 +215,7 @@ async function api(req, res, url) {
     if (m === 'DELETE' && idPart) { pipeline.remove(idPart); return send(res, 200, { ok: true }); }
   }
   if (root === 'meta' && m === 'GET') {
-    return send(res, 200, { formats: composer.FORMATS, platforms: composer.PLATFORMS, ratios: pipeline.RATIOS, cameras: presets.list(presets.CAMERA), looks: presets.list(presets.LOOK) });
+    return send(res, 200, { formats: composer.formats(), platforms: composer.PLATFORMS, ratios: pipeline.RATIOS, cameras: presets.list(presets.CAMERA), looks: presets.list(presets.LOOK) });
   }
   send(res, 404, { error: 'Not found' });
 }

@@ -476,3 +476,156 @@ test('tools: runs respect the budget and a failed run can be retried', async () 
   await call('POST', `/api/runs/${r.id}/retry`);
   assert.equal((await waitRun(r.id)).status, 'done');
 });
+
+// ---- research packs: evidence gate + effect on the writer ----------------------------------
+const EV = { strength: 'MODERATE', source: 'https://seller-us.tiktok.com/university/example', year: 2026 };
+const PACK = {
+  frameworks: [{ id: 'shop_demo', label: 'Shop demo', platforms: ['tiktok_shop'], bestFor: ['gadgets'], beats: [{ name: 'Hook', goal: 'Show product in use' }, { name: 'Proof', goal: 'Show a benefit' }, { name: 'CTA', goal: 'Tap to buy' }], hookFormulas: ['pain'], voiceoverDensity: 'medium', evidence: EV }],
+  hookFormulas: [{ id: 'result_first', instruction: 'Open with the end result the viewer wants, if the product facts state it.', requires: 'facts', evidence: EV }],
+  platformRules: { tiktok_shop: { idealSeconds: [15, 45], hookWithinSeconds: 2, textAdvice: 'Keep text inside the safe area.', requiredElements: ['Product clearly visible early'], source: EV.source } },
+  claimPatterns: [{ regex: '\\bmiracle\\b', reason: 'Miracle claims need substantiation', appliesTo: 'law', severity: 'block', source: 'https://www.ftc.gov/example', year: 2024 },
+    { regex: '\\bviral\\b', reason: 'Do not imply popularity you cannot prove', appliesTo: 'all', severity: 'warn', unlessProvided: true }],
+  cliches: [{ phrase: 'unlock the secret', why: 'tired' }],
+  aiFailureModes: [{ id: 'hands', label: 'Hands', promptAvoid: 'exactly five fingers on each hand', motionAvoid: 'hands stay still and in frame' }],
+  disclosureRules: [{ platform: 'tiktok_shop', applies: 'when posting affiliate content', action: 'Use the affiliate / paid-partnership label', binding: 'policy', source: EV.source, year: 2026 }],
+  shopRules: [{ platform: 'tiktok_shop', rule: 'Product must be visible early', enforce: 'Check scene 1 shows the product', source: EV.source, year: 2026 }],
+};
+
+test('knowledge gate: rejects unsourced, internal, broken and slow rules; accepts the rest', async () => {
+  const bad = { ...PACK,
+    hookFormulas: [...PACK.hookFormulas, { id: 'from_internal', instruction: 'Do the internal secret thing now.', evidence: { ...EV, source: 'Meta Internal Creative Structure Report' } },
+      { id: 'no_year', instruction: 'Ask a yes-or-no question the viewer agrees with.', evidence: { strength: 'STRONG', source: EV.source, year: 1999 } }],
+    claimPatterns: [...PACK.claimPatterns, { regex: '(a+)+$', reason: 'slow', appliesTo: 'all', severity: 'warn' }, { regex: '(', reason: 'broken', appliesTo: 'all', severity: 'warn' },
+      { regex: 'bestseller', reason: 'unsourced block', appliesTo: 'all', severity: 'block' }, { regex: '\\bmiracle\\b', reason: 'dup', appliesTo: 'law', severity: 'warn', source: 'https://www.ftc.gov/x', year: 2024 }],
+    platformRules: { ...PACK.platformRules, reels: { idealSeconds: [45, 15], source: EV.source }, nowhere: { source: EV.source } },
+  };
+  const r = (await call('POST', '/api/knowledge/validate', { pack: bad })).body;
+  const why = (sec, id) => (r.rejected.find((x) => x.section === sec && (x.id === id || (id.length > 3 && x.id.startsWith(id)))) || {}).reason || '';
+  assert.match(why('hookFormulas', 'from_internal'), /internal/);
+  assert.match(why('hookFormulas', 'no_year'), /year/);
+  assert.match(why('claimPatterns', '(a+)+$'), /slow|backtracking/);
+  assert.match(why('claimPatterns', '('), /compile/);
+  assert.match(why('claimPatterns', 'bestseller'), /needs a source/);
+  assert.match(why('claimPatterns', '\\bmiracle\\b'), /contradicts/);
+  assert.match(why('platformRules', 'reels'), /idealSeconds/);
+  assert.match(why('platformRules', 'nowhere'), /unknown platform/);
+  assert.equal(r.accepted.frameworks, 1); assert.equal(r.accepted.hookFormulas, 1);
+  assert.equal(r.accepted.disclosureRules, 1); assert.equal(r.accepted.shopRules, 1); assert.equal(r.accepted.distributionSignals, undefined);
+  assert.equal((await call('POST', '/api/knowledge', { pack: { claimPatterns: [{ regex: 'x', reason: 'r', appliesTo: 'all', severity: 'block' }] } })).status, 400); // nothing valid -> refused
+  assert.equal((await call('GET', '/api/knowledge')).body.loaded, false);
+});
+
+test('a loaded pack changes the writer: guidance in the prompt, blocked claims repaired, AI-failure wording appended', async () => {
+  const saved = await call('POST', '/api/knowledge', { name: 'test pack', pack: PACK });
+  assert.equal(saved.status, 201, JSON.stringify(saved.body));
+  assert.equal((await call('GET', '/api/knowledge')).body.meta.name, 'test pack');
+  const meta = (await call('GET', '/api/meta')).body;
+  assert.equal(meta.formats.shop_demo, 'Shop demo');
+  assert.ok(meta.platforms.tiktok_shop);
+
+  const n0 = writerCalls().length;
+  orScript.push(good({ hook: 'A miracle serum that went viral' }), good());
+  const r = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop', framework: 'shop_demo' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const c = r.body.concepts[0];
+  assert.equal(c.framework, 'shop_demo');
+  const first = writerCalls()[n0].messages[1].content;
+  assert.match(first, /Platform guidance \(from sourced research\)/);
+  assert.match(first, /Ideal length: 15-45 seconds/);
+  assert.match(first, /Product clearly visible early/);
+  assert.match(first, /unlock the secret/);
+  assert.match(writerCalls()[n0 + 1].messages[2 + 1].content, /miracle/i);          // repair turn names the blocked claim
+  assert.match(writerCalls()[n0 + 1].messages[3].content, /Miracle claims need substantiation/);
+  assert.equal(c.attempts, 2);
+  assert.match(c.scenes[0].imagePrompt, /exactly five fingers on each hand/);       // sourced failure-mode wording appended
+  assert.match(c.scenes[0].motionPrompt, /hands stay still/);
+  // the warn-level rule shows as a note, not an error, when the AD itself says "viral"
+  orScript.push(good({ caption: 'This went viral' }));
+  const w = (await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' })).body.concepts[0];
+  assert.ok(w.warnings.some((x) => x.level === 'note' && /popularity/.test(x.text)));
+  assert.ok(!w.warnings.some((x) => x.level === 'error'));
+});
+
+test('post kit: caption, hashtags and a checklist that includes sourced pack rules', async () => {
+  const concept = (await call('POST', '/api/compose', { productId: facts.id, actorId: act.id, variants: 1, scenes: 2, platform: 'tiktok_shop' })).body.concepts[0];
+  const kit = (await call('POST', '/api/postkit', { platform: 'tiktok_shop', concept, actorId: act.id, sponsored: true })).body;
+  const texts = kit.checklist.map((c) => c.text).join('\n');
+  assert.match(texts, /AI-generated content label/);
+  assert.match(texts, /not used the product/);                    // AI presenter warning
+  assert.match(texts, /TikTok Shop/);
+  assert.match(texts, /affiliate \/ paid-partnership label/);      // from the pack
+  assert.ok(kit.checklist.some((c) => c.source === EV.source));
+  assert.ok(kit.hashtags.includes('#ad'));
+  assert.match(kit.text, /- \[ \] /);
+  const organic = (await call('POST', '/api/postkit', { platform: 'tiktok', concept, actorId: act.id, sponsored: false })).body;
+  assert.ok(!organic.hashtags.includes('#ad'));
+  assert.ok(!organic.checklist.some((c) => /paid-partnership/.test(c.text) && c.level === 'law'));
+  await call('DELETE', '/api/knowledge');
+  assert.equal((await call('GET', '/api/knowledge')).body.loaded, false);
+  assert.equal((await call('GET', '/api/meta')).body.formats.shop_demo, undefined);
+});
+
+// ---- the presenter: an AI character cannot give a first-person testimonial -------------
+test('AI presenter: first-person use/results are blocked and repaired; a real attested person may speak in first person', async () => {
+  const n0 = writerCalls().length;
+  orScript.push(good({ hook: 'My skin changed in a week', script: 'I have been using this every day.' }), good());
+  const r = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, framework: 'ugc_testimonial' });
+  assert.equal(r.body.concepts[0].attempts, 2);
+  assert.match(writerCalls()[n0].messages[1].content, /AI character who has NOT used the product/);
+  assert.match(writerCalls()[n0 + 1].messages[3].content, /AI character, so it cannot claim personal use/);
+
+  const aiTry = (await call('POST', '/api/actors', { name: 'Fake', kind: 'ai', attestUsed: true, images: [PNG] })).body;
+  assert.equal(aiTry.kind, 'ai'); assert.equal(aiTry.attestUsed, false);                   // an AI character cannot be "attested"
+  const real = (await call('POST', '/api/actors', { name: 'Sam', kind: 'real', attestUsed: true, images: [PNG] })).body;
+  assert.equal(real.attestUsed, true);
+  const n1 = writerCalls().length;
+  orScript.push(good({ hook: 'My skin changed in a week', script: 'I have been using this every day.' }));
+  const ok = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: real.id, variants: 1, scenes: 2 });
+  assert.equal(writerCalls().length - n1, 1);
+  assert.equal(ok.body.concepts[0].warnings.filter((w) => w.level === 'error').length, 0);
+  assert.match(writerCalls()[n1].messages[1].content, /real person who has used the product/);
+  const realNoUse = (await call('POST', '/api/actors', { name: 'Kim', kind: 'real', images: [PNG] })).body;
+  assert.equal(realNoUse.attestUsed, false);                                                // real but has not vouched: still no first person
+});
+
+// ---- hook testing: alternatives for scene 1 only ---------------------------------------------
+test('hook variants: only hooks that pass the checks are returned; duplicates and invented numbers are dropped', async () => {
+  const concept = { hook: 'Why is my serum always sticky?', scenes: [{ seconds: 5, imagePrompt: '@actor holding @product', motionPrompt: 'slow push in', voiceover: 'Why is my serum always sticky?' }] };
+  const h = (hook, extra = {}) => ({ approach: 'curiosity', hook, voiceover: hook, onScreenText: 'Wait', imagePrompt: '@actor raising @product toward the camera in a bright bathroom, label facing camera, soft window light', ...extra });
+  orScript.push(JSON.stringify({ hooks: [h('Stop scrolling if your serum feels tacky'), h('Why is my serum always sticky?'), h('Get 50% off today only'), h('Here is what fifteen percent vitamin C does')] }));
+  const spend0 = (await call('GET', '/api/spend')).body.total;
+  const r = await call('POST', '/api/hooks', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, concept, count: 3 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const hooks = r.body.hooks.map((x) => x.hook);
+  assert.ok(hooks.includes('Stop scrolling if your serum feels tacky'));
+  assert.ok(!hooks.includes('Why is my serum always sticky?'));    // identical to the current hook
+  assert.ok(!hooks.some((x) => /50%/.test(x)));                     // invented discount
+  assert.match(r.body.hooks[0].imagePrompt, /no watermark/);         // autofixed like any scene
+  assert.equal(Math.round(((await call('GET', '/api/spend')).body.total - spend0) * 1e4) / 1e4, 0.0123);
+  // nothing usable twice -> clear error, both calls recorded
+  orScript.push(JSON.stringify({ hooks: [h('Get 90% off now')] }), JSON.stringify({ hooks: [h('Guaranteed to work')] }));
+  const bad = await call('POST', '/api/hooks', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, concept, count: 3 });
+  assert.equal(bad.status, 400); assert.match(bad.body.error, /usable hooks/);
+  assert.equal((await call('POST', '/api/hooks', { productId: facts.id, actorId: act.id, concept })).status, 400);   // needs a writing model
+  orScript.length = 0;
+});
+
+test('autopilot never renders a concept that still has unresolved problems', async () => {
+  await call('PUT', '/api/settings', { defaults: { text: 'or:acme/writer', image: 'mock:image', video: '' } });
+  const jobsBefore = (await call('GET', '/api/jobs')).body.length;
+  const worse = good({ hook: 'Clinically proven miracle glow' });
+  orScript.push(worse, worse, worse);
+  const r = await call('POST', '/api/autopilot', { productId: facts.id, actorId: act.id, variants: 1, scenes: 2 });
+  assert.equal(r.status, 422);
+  assert.match(r.body.error, /nothing was rendered/);
+  assert.equal((await call('GET', '/api/jobs')).body.length, jobsBefore);   // no jobs, no render spend
+  // one clean + one flagged version: only the clean one renders, the other is reported
+  orScript.push(good(), worse, worse, worse);
+  const mixed = await call('POST', '/api/autopilot', { productId: facts.id, actorId: act.id, variants: 2, scenes: 2 });
+  assert.equal(mixed.status, 201, JSON.stringify(mixed.body));
+  assert.equal(mixed.body.concepts.length, 1);
+  assert.equal(mixed.body.skipped.length, 1);
+  assert.equal(mixed.body.jobs.length, 2);
+  for (const j of mixed.body.jobs) await waitJob(j.id);
+  orScript.length = 0;
+});
