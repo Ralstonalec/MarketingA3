@@ -8,19 +8,21 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <div class="brand">Marketing <b>A3</b></div>
-  <nav id="nav">
-    <button data-tab="studio" class="on">Ad Studio</button>
-    <button data-tab="products">Products</button>
-    <button data-tab="actors">Actors</button>
-    <button data-tab="gallery">Gallery</button>
-    <button data-tab="settings">Settings</button>
-  </nav>
-  <div id="providerBadge" class="badge"></div>
-</header>
-<main id="main"></main>
-<div id="toast"></div>
-<script src="app.js"></script>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Marketing <b>A3</b></div>
+    <nav id="nav"></nav>
+    <button class="spendpill" id="spendpill" title="Open Spend"></button>
+  </aside>
+  <main id="main"></main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="core.js"></script>
+<script src="views-library.js"></script>
+<script src="views-models.js"></script>
+<script src="views-compose.js"></script>
+<script src="views-gallery.js"></script>
+<script src="views-spend.js"></script>
+<script src="main.js"></script>
 </body>
 </html>

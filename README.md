@@ -1,10 +1,6 @@
 # Marketing A3
 
-A self-hosted AI ad studio in the spirit of Higgsfield and Runway's agent tools, running on **your own API keys** so you pay provider rates instead of app subscriptions.
-
-1. Upload your **products** and your **actors** (consented talent only).
-2. Pick a style, add a brief, optionally preview the AI-written concept.
-3. Generate a keyframe of the actor with the product, then animate it into a video.
+A self-hosted AI ad studio on **your own API keys** (OpenRouter + Higgsfield + anything else with an HTTP API). Every model shows its price when you pick it, and every charge is recorded, so you always know your spend.
 
 Zero npm dependencies. Needs Node 20+.
 
@@ -13,50 +9,48 @@ node server.js            # http://127.0.0.1:3000
 npm test
 ```
 
-Open **Settings** and pick a provider: **Custom models** (your own endpoints, recommended), **Runway**, or **Demo** (free placeholder images, the default).
+## Quick start
 
-## How a generation works
+1. **Settings**: paste your OpenRouter key (and Higgsfield key). Optionally set a monthly budget.
+2. **Models**: press *Refresh OpenRouter list* to load every text and image model with its live price.
+3. **Library**: add your products and actors (consented talent only).
+4. **Ad Composer**: pick product, actor, platform, style, brief and a **writing model**. You get editable concepts (hook, script, per-scene image/motion prompts, caption, hashtags, CTA).
+5. Pick image and video models for a concept, check the itemised price, and generate. Results land in the **Gallery**; charges land in **Spend**.
 
-| Stage | What happens | Runway model |
-|---|---|---|
-| Concept | Claude writes the scene prompt, motion prompt and a spoken line (optional; template fallback without a key) | – |
-| Keyframe | Actor and product photos are sent as tagged references (`@actor`, `@product`) | `gen4_image` |
-| Video | Keyframe is animated, 5 or 10 s | `gen4_turbo` |
+**Studio** is the manual route: write the prompts yourself for one scene.
 
-Results are downloaded to `data/outputs/` because provider URLs expire. Jobs persist and resume after a restart.
+## Pricing and spend
 
-## Bring your own models (Custom provider)
+- **Text models** (OpenRouter): live USD per 1M tokens from OpenRouter's model list. The per-call price shown is an estimate from the token assumptions in Settings; the **actual** cost is recorded from OpenRouter's reported usage after each call.
+- **OpenRouter image models**: billed as output tokens, so the price is marked *estimate* until a real run reports the actual cost.
+- **Higgsfield / custom video and image models**: you enter the price from the provider's pricing page (per second, per video or per image). A model with no price is **refused** rather than guessed.
+- Recording: the ledger stores *actual* when the provider reports a cost and *estimate* otherwise (Spend labels each row). Failed generations are not charged in the ledger, so check your provider dashboard for anything billed on failure.
+- **Budget**: a monthly cap blocks jobs and composer runs that would pass it, counting work already queued. `0` = no cap.
+- Export the full ledger from Spend as CSV.
 
-Settings → Custom models takes two JSON configs, one per stage:
+## Adding Higgsfield and other models
 
-- **image**: actor + product references → keyframe. Placeholders: `{{prompt}} {{ratio}} {{width}} {{height}} {{actorImage}} {{productImage}} {{images}}` (both as an array).
-- **video**: keyframe → video. Placeholders: `{{prompt}} {{ratio}} {{width}} {{height}} {{duration}} {{image}}` (data URI).
-
-Common to both: `{{apiKey}}` (from the key field or `CUSTOM_API_KEY`) and `{{submit.<field>}}` (fields from the submit response). A value that is exactly one placeholder keeps its type; `{{duration|string}}` forces text.
+Models page → *Add Higgsfield / custom model*. Each model is a name, a price and a JSON call config:
 
 ```json
 {
-  "submit": { "url": "https://queue.fal.run/<model>", "headers": { "Authorization": "Key {{apiKey}}" },
-              "body": { "prompt": "{{prompt}}", "image_url": "{{image}}", "duration": "{{duration|string}}" } },
+  "submit": { "url": "https://…/<model-path>", "headers": { "Authorization": "Key {{apiKey}}" },
+              "body": { "prompt": "{{prompt}}", "image_url": "{{image}}", "duration": "{{duration}}" } },
   "poll":   { "url": "{{submit.status_url}}", "statusPath": "status", "resultUrl": "{{submit.response_url}}" },
   "resultPath": "video.url"
 }
 ```
 
-- Omit `poll` for synchronous APIs: the result is read straight from the submit response.
-- `poll.resultUrl` (optional) is fetched after the status turns done, for APIs that serve results from a second URL.
-- `resultPath` is a dotted path (comma-separated fallbacks allowed) to the output URL; an array uses its first item.
-- Status values: done = `completed/succeeded/success/done/finished` (override with `poll.doneValues`); failed = `failed/error/canceled`.
-- Self-hosting (ComfyUI, Wan, LTX, Hunyuan, …): put a small HTTP wrapper in front of the model that accepts the JSON above and returns a result URL. Output URLs are downloaded to `data/outputs/`.
+- Placeholders: `{{prompt}} {{ratio}} {{width}} {{height}} {{duration}} {{image}}` (keyframe as a data URI), `{{images}}` (actor + product), `{{actorImage}} {{productImage}}`, `{{apiKey}}`, `{{submit.<field>}}` (from the submit response). A value that is exactly one placeholder keeps its type; `{{duration|string}}` forces text.
+- Omit `poll` for synchronous APIs. `poll.resultUrl` is fetched after the status turns done. `resultPath` is a dotted path (comma-separated fallbacks) to the output URL.
+- Use **Test** on a model to submit one real request and see the raw response (it may be billed).
 
-**Load fal.ai example** in Settings fills in a starting point. Model slugs and field names change, so check the provider's docs before relying on it.
+**The Higgsfield and OpenRouter-video templates are starting points, not verified configs.** They were written without access to those providers' docs, so check the model path, auth header format, request fields and result path against Higgsfield's API documentation and use Test before relying on them.
 
-## Adding a built-in provider
-
-Implement `startImage`, `startVideo`, `poll` in `lib/providers/<name>.js` (see `runway.js`), register it in `lib/providers/index.js`, and add its name to the allow-list in `lib/settings.js`.
+Keys: `OPENROUTER_API_KEY`, `HIGGSFIELD_KEY`, `CUSTOM_API_KEY` override the Settings page. See `.env.example`.
 
 ## Notes
 
-- Cost figures are **estimates** from the rates in Settings; check your provider's pricing.
-- Keys live in `data/db.json` (gitignored) and are never sent to the browser. If you bind to anything other than localhost, set `APP_PASSWORD`.
-- Not built yet: voiceover/lip-sync, multi-scene storyboards, batch variants, auth for multiple users.
+- Keys live in `data/db.json` (gitignored) and never go to the browser. If you bind to anything other than localhost, set `APP_PASSWORD`.
+- Provider output URLs expire, so results are downloaded to `data/outputs/`. Jobs resume after a restart.
+- Not built yet: voiceover/lip-sync, stitching scenes into one video, multiple users.
