@@ -47,6 +47,17 @@ The **Tools** page runs any model you register on the Models page: image edit / 
 
 `docs/higgsfield-research-brief.md` lists exactly what to look up in Higgsfield's docs to turn their models into working configs.
 
+## Keys, model lists and spend accuracy
+
+- **Test key** (Settings): OpenRouter shows the key's label, usage and balance. Higgsfield has no documented account endpoint, so its key is tested with the documented estimate call (import its models first). A rejected key is reported, not thrown.
+- **Reconcile** (Spend → Check against OpenRouter): OpenRouter's own usage figure beside what this app recorded. They can differ if the same key is used elsewhere, so the difference is shown, not "fixed".
+- **Model lists stay current.** Sync now (Models) and a background pass (every 12 hours by default, Settings) re-read OpenRouter's list and the saved Higgsfield spec and re-fetch exact Higgsfield prices. New endpoints are added, changed ones updated, and ones the provider dropped are flagged *removed by provider* (your history and prices are kept). The background pass only runs while the server is running.
+- **Price changes are tracked.** Every refresh compares prices; moves show as a banner on Models, with a note when it is a model you use.
+- **Learned costs.** After 3 real runs where OpenRouter reported what it actually charged, quotes for that model use the real average (tagged *learned*) instead of the token-based guess. Each purpose learns separately (full ads, hooks, link import, images). A price you typed always wins; turn it off in Settings.
+- **Favorites and hidden models** are saved on the server. Transient errors are retried (OpenRouter 429/5xx on reads, 429/503 on paid calls only, since those mean "not processed"); an auth failure is never retried.
+- `data/db.json` holds your API keys and is created owner-only (mode 600). Keep `data/` out of git and backups you share.
+- **Higgsfield spend is estimate-based:** its status response documents no charged amount, so those ledger rows are marked *estimate*. Compare with the Higgsfield console now and then.
+
 ## Pricing and spend
 
 - **Text models** (OpenRouter): live USD per 1M tokens from OpenRouter's model list. The per-call price shown is an estimate from the token assumptions in Settings; the **actual** cost is recorded from OpenRouter's reported usage after each call.

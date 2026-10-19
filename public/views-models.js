@@ -1,6 +1,6 @@
 'use strict';
 const TOOL_KINDS = ['edit', 'upscale', 'lipsync', 'audio'];
-const ui = { showApi: false, apiDrafts: null, apiUrl: 'https://docs.higgsfield.ai/docs/openapi.json', apiProvider: 'higgsfield', modelKind: 'text', modelQuery: '', modelProvider: 'all', showAdd: false, editing: null };
+const ui = { showHidden: false, showApi: false, apiDrafts: null, apiUrl: 'https://docs.higgsfield.ai/docs/openapi.json', apiProvider: 'higgsfield', modelKind: 'text', modelQuery: '', modelProvider: 'all', showAdd: false, editing: null };
 
 // Call-config starting points. Field names come from how each API is generally documented;
 // ALWAYS check the provider's docs and use "Test" to see the real response before relying on one.
@@ -115,11 +115,36 @@ function priceEditor(m) {
     m.price.basis === 'manual' && m.provider === 'openrouter' ? h('button', { class: 'sec fit', title: 'Go back to the live price', onclick: guard(async () => { await api('PUT', 'models/price', { id: m.id, price: null }); ui.editing = null; await refreshModels(); render(); }) }, 'Reset') : null);
 }
 
+const fmtVal = (v) => (Number.isFinite(v) ? (v < 1 ? '$' + v.toFixed(4) : '$' + v.toFixed(2)) : String(v));
+const ago = (iso) => { if (!iso) return 'never'; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 90 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+
+/** Price moves seen on the last refreshes. A rise on a model you rely on is called out. */
+function changesBanner() {
+  const ch = state.priceChanges || [];
+  if (!ch.length) return null;
+  const mine = new Set([...Object.values(state.settings.defaults), ...state.models.filter((m) => m.favorite).map((m) => m.id)]);
+  return h('div', { class: 'panel', style: 'margin-bottom:16px;border-color:var(--warn)' }, h('div', { class: 'row' }, h('h2', { style: 'margin:0' }, `${ch.length} price change${ch.length > 1 ? 's' : ''} since your last look`),
+    h('button', { class: 'sec fit', onclick: guard(async () => { await api('DELETE', 'price-changes'); await refreshModels(); render(); }) }, 'Dismiss')),
+    h('table', {}, h('tbody', {}, ch.slice(0, 8).map((c) => h('tr', {},
+      h('td', {}, c.label, mine.has(c.id) ? h('span', { class: 'tag est', style: 'margin-left:6px' }, 'you use this') : null, h('div', { class: 'small' }, c.field)),
+      h('td', { class: 'num' }, `${fmtVal(c.from)} → ${fmtVal(c.to)}`),
+      h('td', { class: 'num ' + (c.to > c.from ? 'warn' : '') }, c.pct == null ? '' : `${c.pct > 0 ? '+' : ''}${c.pct}%`),
+      h('td', { class: 'small' }, ago(c.at)))))),
+    ch.length > 8 ? h('div', { class: 'small' }, `and ${ch.length - 8} more`) : null);
+}
+
+function syncLine() {
+  const info = state.syncInfo || {};
+  const bit = (name, key) => info[key] ? h('div', { class: 'small' }, `${name}: ${info[key].ok === false ? '' : ''}`, info[key].ok === false ? h('span', { class: 'warn' }, `last attempt failed (${info[key].error}). `) : '', info[key].okAt ? `synced ${ago(info[key].okAt)}${info[key].summary ? ' · ' + info[key].summary : ''}` : 'never synced') : null;
+  return [bit('OpenRouter', 'openrouter'), bit('Higgsfield', 'higgsfield')];
+}
+
 const unpricedWithEstimate = () => state.models.filter((m) => m.estimate && !m.priced).length;
 
 function viewModels() {
   const d = state.settings.defaults;
   const rows = modelsOf(ui.modelKind === 'tools' ? TOOL_KINDS : ui.modelKind)
+    .filter((m) => ui.showHidden || !m.hidden)
     .filter((m) => ui.modelProvider === 'all' || m.provider === ui.modelProvider)
     .filter((m) => !ui.modelQuery || (m.label + m.id).toLowerCase().includes(ui.modelQuery.toLowerCase()))
     .sort((a, b) => (b.priced - a.priced) || a.label.localeCompare(b.label));
@@ -131,8 +156,13 @@ function viewModels() {
     finally { render(); }
   }) }, 'Refresh OpenRouter list');
   return h('div', {},
+    changesBanner(),
     h('div', { class: 'row', style: 'margin-bottom:6px' }, h('div', {}, h('h1', {}, 'Models'), h('p', { class: 'sub', style: 'margin:0' }, `Every model you can use, with its price. ${state.modelsFetchedAt ? 'OpenRouter list updated ' + new Date(state.modelsFetchedAt).toLocaleString() + '.' : 'Add your OpenRouter key in Settings, then fetch the list.'}`)),
-      h('div', { class: 'fit row', style: 'justify-content:flex-end' }, refresh, h('button', { class: 'sec', onclick: () => { ui.showApi = !ui.showApi; render(); } }, ui.showApi ? 'Close import' : 'Import from OpenAPI'), h('button', { class: 'primary', onclick: () => { ui.showAdd = !ui.showAdd; render(); } }, ui.showAdd ? 'Close' : 'Add one by hand'))),
+      h('div', { class: 'fit row', style: 'justify-content:flex-end' }, h('button', { class: 'sec', title: 'Re-read OpenRouter\'s list and the saved Higgsfield spec, and re-fetch prices', onclick: guard(async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Syncing…';
+        try { const r = await api('POST', 'models/sync', { provider: 'all' }); state.models = r.models; state.priceChanges = r.changes; state.syncInfo = r.sync; const bad = Object.entries(r.results).filter(([, v]) => v.error); toast(bad.length ? `Sync problem: ${bad[0][1].error}` : 'Synced'); } finally { render(); }
+      }) }, 'Sync now'), refresh, h('button', { class: 'sec', onclick: () => { ui.showApi = !ui.showApi; render(); } }, ui.showApi ? 'Close import' : 'Import from OpenAPI'), h('button', { class: 'primary', onclick: () => { ui.showAdd = !ui.showAdd; render(); } }, ui.showAdd ? 'Close' : 'Add one by hand'))),
+    h('div', {}, syncLine()),
     h('div', { style: 'height:16px' }),
     ui.showApi ? openapiPanel() : null,
     ui.showAdd ? addModelPanel() : null,
@@ -143,11 +173,12 @@ function viewModels() {
     h('div', { class: 'tabs' }, ['text', 'image', 'video', 'tools'].map((k) => h('button', { class: 'chip' + (ui.modelKind === k ? ' sel' : ''), onclick: () => { ui.modelKind = k; render(); } }, `${k[0].toUpperCase() + k.slice(1)} (${modelsOf(k === 'tools' ? TOOL_KINDS : k).length})`))),
     h('div', { class: 'row', style: 'margin-bottom:12px' },
       h('input', { placeholder: 'Search models…', value: ui.modelQuery, oninput: (e) => { ui.modelQuery = e.target.value; const p = e.target.selectionStart; render(); const i = document.querySelector('#main input[placeholder^="Search"]'); i.focus(); i.setSelectionRange(p, p); } }),
+      h('label', { class: 'fit', style: 'display:flex;gap:6px;align-items:center;margin:0;white-space:nowrap' }, h('input', { type: 'checkbox', style: 'width:auto', checked: ui.showHidden, onchange: (e) => { ui.showHidden = e.target.checked; render(); } }), 'Show hidden'),
       h('select', { class: 'fit', onchange: (e) => { ui.modelProvider = e.target.value; render(); } }, providers.map((p) => h('option', { value: p, selected: p === ui.modelProvider }, p === 'all' ? 'All providers' : p)))),
     h('div', { class: 'panel', style: 'padding:0;overflow:auto' }, shown.length ? h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Model'), h('th', {}, 'Provider'), h('th', {}, 'Price'), h('th', {}, ''), h('th', {}, ''))),
       h('tbody', {}, shown.map((m) => h('tr', {},
-        h('td', {}, m.label, h('div', { class: 'small' }, m.id.replace(/^[a-z]+:/, ''))),
+        h('td', {}, m.favorite ? '★ ' : '', m.label, m.missing ? h('span', { class: 'tag unset', style: 'margin-left:6px', title: 'The provider no longer lists this model. Your history and prices are kept.' }, 'removed by provider') : null, m.hidden ? h('span', { class: 'tag', style: 'margin-left:6px' }, 'hidden') : null, h('div', { class: 'small' }, m.id.replace(/^[a-z]+:/, '')), (m.notes && m.notes.length) ? h('details', {}, h('summary', { class: 'small' }, `${m.notes.length} note(s) from import`), m.notes.map((n) => h('div', { class: 'small' }, n))) : null),
         h('td', {}, m.provider, TOOL_KINDS.includes(m.kind) ? h('div', { class: 'small' }, m.kind) : null),
         h('td', {}, ui.editing === m.id ? priceEditor(m) : [priceText(m), ' ', basisTag(m)]),
         h('td', {}, TOOL_KINDS.includes(m.kind) ? null : d[m.kind] === m.id ? h('span', { class: 'tag live' }, 'default') : h('button', { class: 'ghost', onclick: guard(async () => {
@@ -160,6 +191,7 @@ function viewModels() {
             try { const r = (await api('POST', 'models/estimate', { id: m.id })).results[0]; toast(r.ok ? `Price set: ${r.detail}` : r.error); await refreshModels(); render(); } finally { e.target.textContent = 'Get price'; }
           }) }, 'Get price') : null,
           h('button', { class: 'ghost', onclick: () => { ui.editing = ui.editing === m.id ? null : m.id; render(); } }, 'Price'),
+          h('button', { class: 'ghost', title: m.hidden ? 'Show in pickers again' : 'Hide from pickers', onclick: guard(async () => { await api('POST', 'models/prefs', { id: m.id, hidden: !m.hidden }); await refreshModels(); render(); }) }, m.hidden ? 'Unhide' : 'Hide'),
           m.kind === 'text' || m.engine === 'http' ? h('button', { class: 'ghost', title: 'Sends one real request and may be billed', onclick: guard(async (e) => {
             e.target.textContent = '…';
             try { const r = await api('POST', 'models/test', { id: m.id }); alert(m.kind === 'text' ? `Reply: ${r.reply}\nCost: ${r.usd == null ? 'not reported' : money(r.usd)}` : `${r.note}\n\nResponse:\n${JSON.stringify(r.submitResponse, null, 2)}`); await refreshLight(); }

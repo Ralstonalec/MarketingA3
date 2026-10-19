@@ -11,6 +11,23 @@ function spendChart(days) {
   return svg;
 }
 
+/** Ask OpenRouter what it thinks you have spent and compare it with this app's ledger. */
+function reconcilePanel() {
+  const out = h('div', {});
+  const row = (label, v, note) => h('tr', {}, h('td', {}, label), h('td', { class: 'num' }, v == null ? '—' : money(v)), h('td', { class: 'small' }, note || ''));
+  return h('div', { class: 'panel', style: 'margin-bottom:0' }, h('div', { class: 'row' }, h('div', {}, h('h2', { style: 'margin:0' }, 'Check against OpenRouter'), h('div', { class: 'small' }, 'Compares OpenRouter\'s own usage figure with what this app recorded.')),
+    h('button', { class: 'sec fit', onclick: guard(async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Asking OpenRouter…';
+      try {
+        const r = await api('GET', 'accounts/reconcile');
+        out.replaceChildren(h('table', {}, h('tbody', {},
+          row(`OpenRouter says you used (${r.providerSource || 'n/a'})`, r.providerUsageUsd), row('This app recorded (OpenRouter models)', r.ledgerUsd, `${money(r.ledgerActualUsd)} actual, ${money(r.ledgerEstimatedUsd)} estimated`),
+          row('Difference', r.driftUsd, r.driftUsd != null && Math.abs(r.driftUsd) > 0.01 ? (r.driftUsd > 0 ? 'OpenRouter shows more than this app recorded.' : 'This app recorded more than OpenRouter shows.') : 'Matches.'),
+          row('Balance left', r.balanceUsd), r.keyLimitUsd != null ? row('Key spending limit', r.keyLimitUsd) : null)), h('p', { class: 'small' }, r.note));
+      } catch (err) { out.replaceChildren(h('div', { class: 'warn' }, err.message)); } finally { e.target.disabled = false; e.target.textContent = 'Check now'; }
+    }) }, 'Check now')), out);
+}
+
 async function viewSpend() {
   const [s, ledger] = await Promise.all([api('GET', 'spend'), api('GET', 'ledger')]);
   state.spend = s; renderSpendPill();
@@ -24,7 +41,8 @@ async function viewSpend() {
       h('div', { class: 'stat' }, h('small', {}, 'This month'), h('b', {}, money(s.month)), cap > 0 ? h('div', { class: 'bar' + (s.month / cap > 0.85 ? ' hot' : '') }, h('i', { style: `width:${Math.min(100, (s.month / cap) * 100)}%` })) : null),
       h('div', { class: 'stat' }, h('small', {}, cap > 0 ? 'Budget left this month' : 'Monthly budget'), h('b', {}, cap > 0 ? money(s.budget.remaining) : 'No cap'), h('small', {}, cap > 0 ? `of ${money(cap)}` : 'Set one in Settings')),
       h('div', { class: 'stat' }, h('small', {}, 'All time'), h('b', {}, money(s.total)), h('small', {}, `${money(s.estimatedShare)} of it estimated`))),
-    h('div', { class: 'panel' }, h('h2', {}, 'Last 30 days'), spendChart(s.days)),
+    reconcilePanel(),
+    h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, 'Last 30 days'), spendChart(s.days)),
     h('div', { class: 'cols', style: 'grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:16px' },
       h('div', { class: 'panel' }, h('h2', {}, 'By model (this month)'), s.byModel.length ? h('table', {}, h('tbody', {}, s.byModel.map((r) => h('tr', {}, h('td', {}, name(r.key)), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, 'Nothing spent yet this month.')),
       h('div', { class: 'panel' }, h('h2', {}, 'By type (this month)'), s.byKind.length ? h('table', {}, h('tbody', {}, s.byKind.map((r) => h('tr', {}, h('td', {}, r.key), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, '—'))),

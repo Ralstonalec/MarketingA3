@@ -1,5 +1,6 @@
 'use strict';
 const state = {
+  priceChanges: [], syncInfo: {},
   view: 'quick', products: [], actors: [], jobs: [], runs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
   compose: { productId: null, actorId: null, platform: 'tiktok', framework: '', camera: '', look: '', polish: false, tone: 'energetic, authentic', cta: '', brief: '', variants: 2, scenes: 2, sceneSeconds: 5, textModel: null, result: null, busy: false },
   tools: { modelId: null, prompt: '', duration: 5, ratio: '9:16', slots: {}, preset: null },
@@ -64,7 +65,7 @@ async function refreshLight() {
 }
 async function refreshModels() {
   const r = await api('GET', 'models');
-  state.models = r.models; state.modelsFetchedAt = r.fetchedAt;
+  state.models = r.models; state.modelsFetchedAt = r.fetchedAt; state.priceChanges = r.changes || []; state.syncInfo = r.sync || {};
 }
 const modelById = (id) => state.models.find((m) => m.id === id);
 const modelsOf = (kind) => state.models.filter((m) => [].concat(kind).includes(m.kind));
@@ -78,7 +79,16 @@ function renderSpendPill() {
 }
 
 // ---- price display -----------------------------------------------------------
+/** What real charges say this model costs per use, if there are enough of them and you have not typed a price. */
+function learnedFor(m) {
+  const l = m.learned && m.learned[m.kind === 'text' ? 'compose' : 'image'];
+  const on = state.settings && state.settings.sync && state.settings.sync.learnCosts;
+  return on && l && l.n >= 3 && m.provider === 'openrouter' && m.price.basis !== 'manual' ? l : null;
+}
+
 function priceText(m) {
+  const lr = learnedFor(m);
+  if (lr) return `≈${money(lr.avgUsd)} / ${m.kind === 'text' ? 'call' : 'image'} (from ${lr.n} real runs)`;
   const p = m.price, a = (state.settings && state.settings.assumptions) || { imageOutTokens: 1300 };
   if (!m.priced) return 'no price set';
   if (p.unit === 'tokens') return `${money(p.in)} in · ${money(p.out)} out per 1M tokens`;
@@ -89,28 +99,28 @@ function priceText(m) {
 }
 function basisTag(m) {
   const b = !m.priced ? 'unset' : m.price.basis;
-  const text = { live: 'live price', 'live-estimate': 'estimate', 'provider-estimate': 'from provider', manual: 'your price', unset: 'set price' }[b] || b;
-  const cls = { live: 'live', 'live-estimate': 'est', 'provider-estimate': 'live', manual: 'manual', unset: 'unset' }[b] || '';
+  const text = { live: 'live price', 'live-estimate': 'estimate', 'provider-estimate': 'from provider', manual: 'your price', unset: 'set price' }[learnedFor(m) ? 'learned' : b] || (learnedFor(m) ? 'learned' : b);
+  const cls = learnedFor(m) ? 'live' : { live: 'live', 'live-estimate': 'est', 'provider-estimate': 'live', manual: 'manual', unset: 'unset' }[b] || '';
   return h('span', { class: `tag ${cls}`, title: b === 'live-estimate' ? 'Billed per output token; the real cost is recorded after each generation' : '' }, text);
 }
 
 // ---- model picker ------------------------------------------------------------
 function modelPicker({ kind, value, onChange, noneLabel, filter = () => true }) {
   let open = false, q = '';
-  const favs = () => new Set(lsGet('a3.favs', []));
   const root = h('div', { class: 'mp' });
   const cur = () => modelById(value);
 
   function pick(id) { value = id; open = false; q = ''; draw(); onChange(id); }
-  function toggleFav(id, ev) {
+  const toggleFav = guard(async (id, ev) => {
     ev.stopPropagation();
-    const f = favs(); f.has(id) ? f.delete(id) : f.add(id); lsSet('a3.favs', [...f]); draw();
-  }
+    const m = modelById(id), updated = await api('POST', 'models/prefs', { id, favorite: !m.favorite });
+    state.models = state.models.map((x) => (x.id === id ? updated : x)); draw();
+  });
   function items() {
-    const f = favs(), needle = q.trim().toLowerCase();
-    return modelsOf(kind).filter(filter)
+    const needle = q.trim().toLowerCase();
+    return modelsOf(kind).filter(filter).filter((m) => m.id === value || (!m.hidden && !m.missing))
       .filter((m) => !needle || (m.label + ' ' + m.id).toLowerCase().includes(needle))
-      .sort((a, b) => (f.has(b.id) - f.has(a.id)) || (b.priced - a.priced) || a.label.localeCompare(b.label))
+      .sort((a, b) => (b.favorite - a.favorite) || (b.priced - a.priced) || a.label.localeCompare(b.label))
       .slice(0, 80);
   }
   function draw() {
@@ -120,12 +130,11 @@ function modelPicker({ kind, value, onChange, noneLabel, filter = () => true }) 
       m ? basisTag(m) : h('span', {}, '▾'));
     root.replaceChildren(btn);
     if (!open) return;
-    const f = favs();
     const list = h('div', { class: 'mp-list', role: 'listbox' });
     if (noneLabel) list.append(h('div', { class: 'mp-item', onclick: () => pick(null) }, h('span', {}, noneLabel, h('small', {}, 'Free, no AI'))));
     for (const it of items()) {
       list.append(h('div', { class: 'mp-item' + (it.id === value ? ' sel' : ''), role: 'option', onclick: () => pick(it.id) },
-        h('span', {}, h('button', { type: 'button', class: 'star' + (f.has(it.id) ? ' on' : ''), title: 'Favorite', 'aria-label': 'Toggle favorite', onclick: (e) => toggleFav(it.id, e) }, f.has(it.id) ? '★' : '☆'), it.label,
+        h('span', {}, h('button', { type: 'button', class: 'star' + (it.favorite ? ' on' : ''), title: 'Favorite (saved on the server)', 'aria-label': 'Toggle favorite', onclick: (e) => toggleFav(it.id, e) }, it.favorite ? '★' : '☆'), it.label,
           h('small', {}, `${it.provider} · ${[].concat(kind).length > 1 ? it.kind + ' · ' : ''}${it.id.replace(/^[a-z]+:/, '')}`)),
         h('span', { class: 'px' }, priceText(it), h('div', {}, basisTag(it)))));
     }

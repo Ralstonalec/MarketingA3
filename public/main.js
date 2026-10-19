@@ -1,16 +1,24 @@
 'use strict';
-function viewSettings() {
+async function viewSettings() {
   const s = state.settings;
+  const accts = await api('GET', 'accounts');
   const key = (name, hint) => {
     const k = s.keys[name];
     const inp = h('input', { type: 'password', autocomplete: 'off', placeholder: k.set ? `${k.preview}${k.fromEnv ? ' (set by environment)' : ' (saved)'}` : 'Paste key' });
-    return { name, inp, el: h('div', {}, h('label', {}, `${k.label} API key`), inp, hint ? h('div', { class: 'small', style: 'margin-top:4px' }, hint) : null) };
+    const chk = accts[name] && accts[name].check, res = h('div', { class: 'small', style: 'margin-top:4px' });
+    const draw = (c) => res.replaceChildren(...(c ? [h('span', { class: `tag ${c.ok === true ? 'live' : c.ok === false ? 'unset' : 'est'}` }, c.ok === true ? 'key works' : c.ok === false ? 'key problem' : 'untested'), ` ${c.detail} `, h('span', { class: 'small' }, `(${new Date(c.at).toLocaleString()})`)] : []));
+    draw(chk);
+    const test = h('button', { class: 'sec', type: 'button', style: 'margin-top:6px', disabled: !k.set, onclick: guard(async (e) => { e.target.disabled = true; e.target.textContent = 'Testing…'; try { draw(await api('POST', 'accounts/test', { provider: name })); } finally { e.target.disabled = !k.set; e.target.textContent = 'Test key'; } }) }, 'Test key');
+    return { name, inp, el: h('div', {}, h('label', {}, `${k.label} API key`), inp, hint ? h('div', { class: 'small', style: 'margin-top:4px' }, hint) : null, test, res) };
   };
   const keys = [key('openrouter', 'Used for the writing models and OpenRouter image models.'), key('higgsfield', 'Create a key in console.higgsfield.ai. A credential is a key ID plus a secret; enter them as KEY_ID:SECRET. If requests return 401, compare with the format on Higgsfield\'s Authentication docs page.'), key('custom', 'Only needed for self-hosted or other APIs that use {{apiKey}}.')];
   const b = s.brand;
   const brand = { name: h('input', { value: b.name, placeholder: 'Your brand or business name' }), voice: h('input', { value: b.voice, placeholder: 'e.g. warm, witty, no hype, speaks like a friend' }),
     forbidden: h('input', { value: b.forbidden, placeholder: 'Words to never use in any ad, comma separated' }), defaultCta: h('input', { value: b.defaultCta, placeholder: 'e.g. Shop now at example.com' }) };
   let disclosure = b.disclosure, realism = b.realismBoost;
+  const syncHours = h('input', { type: 'number', min: '0', max: '168', value: s.sync.autoRefreshHours });
+  let learn = s.sync.learnCosts;
+  const specUrl = h('input', { value: s.sync.higgsfieldSpecUrl, placeholder: 'https://docs.higgsfield.ai/docs/openapi.json' });
   const budget = h('input', { type: 'number', min: '0', step: '1', value: s.budget.monthlyUsd });
   const as = Object.fromEntries(Object.entries(s.assumptions).map(([k, v]) => [k, h('input', { type: 'number', min: '1', value: v })]));
   return h('div', { style: 'max-width:620px' }, h('h1', {}, 'Settings'), h('p', { class: 'sub' }, 'Keys are stored in data/db.json on the machine running this app and are never sent to the browser. Environment variables override them.'),
@@ -19,6 +27,11 @@ function viewSettings() {
       h('label', {}, 'Brand name'), brand.name, h('label', {}, 'Voice'), brand.voice, h('label', {}, 'Never say (all ads)'), brand.forbidden, h('label', {}, 'Default call to action'), brand.defaultCta,
       h('label', {}, h('input', { type: 'checkbox', checked: b.disclosure, style: 'width:auto;margin-right:8px', onchange: (e) => (disclosure = e.target.checked) }), 'Add #ad disclosure hashtag automatically'),
       h('label', {}, h('input', { type: 'checkbox', checked: b.realismBoost, style: 'width:auto;margin-right:8px', onchange: (e) => (realism = e.target.checked) }), 'Add realism guards to prompts (correct hands, sharp product label, no watermark, no morphing)')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Model lists and prices'),
+      h('p', { class: 'small', style: 'margin-top:-8px' }, 'The app re-reads OpenRouter\'s model list and the saved Higgsfield spec in the background, re-fetches exact prices, and tells you when one changes.'),
+      h('label', {}, 'Refresh every (hours, 0 = off)'), syncHours,
+      h('label', { style: 'display:flex;gap:8px;align-items:center;color:var(--text)' }, h('input', { type: 'checkbox', style: 'width:auto', checked: learn, onchange: (e) => (learn = e.target.checked) }), 'Quote from what the provider actually charged once there are 3 or more real runs'),
+      h('label', {}, 'Higgsfield spec address (set automatically when you import)'), specUrl),
     h('div', { class: 'panel' }, h('h2', {}, 'Budget'), h('label', {}, 'Monthly cap in USD (0 = no cap)'), budget,
       h('p', { class: 'small' }, 'Jobs and composer runs that would push you past the cap (counting work already queued) are refused before they start.')),
     h('div', { class: 'panel' }, h('h2', {}, 'Estimate assumptions'),
@@ -27,6 +40,7 @@ function viewSettings() {
     h('div', { style: 'margin-top:16px' }, h('button', { class: 'primary', onclick: guard(async () => {
       await api('PUT', 'settings', {
         keys: Object.fromEntries(keys.map((k) => [k.name, k.inp.value])), budget: { monthlyUsd: budget.value },
+        sync: { autoRefreshHours: syncHours.value, learnCosts: learn, higgsfieldSpecUrl: specUrl.value },
         brand: { name: brand.name.value, voice: brand.voice.value, forbidden: brand.forbidden.value, defaultCta: brand.defaultCta.value, disclosure, realismBoost: realism },
         assumptions: Object.fromEntries(Object.entries(as).map(([k, i]) => [k, i.value])),
       });
