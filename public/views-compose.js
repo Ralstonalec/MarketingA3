@@ -37,13 +37,22 @@ function renderControls(r, { getScenes, onGenerate, label }) {
   return root;
 }
 
+function qualityBox(c) {
+  const errs = (c.warnings || []).filter((w) => w.level === 'error'), notes = (c.warnings || []).filter((w) => w.level === 'note');
+  if (!errs.length && !notes.length) return null;
+  return h('div', { class: 'quote', style: 'margin:8px 0' },
+    errs.length ? h('div', { class: 'warn' }, h('b', {}, 'Review before rendering: '), errs.map((w) => w.text).join(' ')) : null,
+    notes.length ? h('div', { class: 'small' }, notes.map((w) => w.text).join(' · ')) : null);
+}
+
 function conceptCard(c, i) {
   const st = state.compose;
   const r = c.render || (c.render = defaultRender(st.platform));
   const tagsText = c.hashtags.join(' ');
   let ctrl;
   return h('div', { class: 'concept' },
-    h('div', { class: 'row', style: 'margin-bottom:4px' }, h('h3', {}, `${i + 1}. ${c.title}`), c.angle ? h('span', { class: 'tag fit' }, c.angle) : null),
+    h('div', { class: 'row', style: 'margin-bottom:4px' }, h('h3', {}, `${i + 1}. ${c.title}`), h('div', { class: 'fit chips' }, c.framework ? h('span', { class: 'tag' }, (state.meta.formats[c.framework] || c.framework)) : null, c.angle ? h('span', { class: 'tag' }, c.angle) : null, c.attempts > 1 ? h('span', { class: 'tag est', title: 'The first draft broke a rule, so the writer was asked to fix it' }, `fixed in ${c.attempts} tries`) : null)),
+    qualityBox(c),
     h('div', { class: 'hook' }, `“${c.hook}”`),
     h('label', {}, 'Script'), h('textarea', { oninput: (e) => (c.script = e.target.value) }, c.script),
     h('div', { class: 'row' },
@@ -69,17 +78,19 @@ function conceptCard(c, i) {
 function viewCompose() {
   const c = state.compose;
   if (!c.textInit) { c.textModel = state.settings.defaults.text || null; c.textInit = true; }
+  if (!c.productId && state.products.length === 1) c.productId = state.products[0].id;
+  if (!c.actorId && state.actors.length === 1) c.actorId = state.actors[0].id;
   const noModels = !state.models.some((m) => m.kind === 'text');
   const textQuoteWrap = h('div', {});
   const drawTextQuote = () => {
     if (!c.textModel) { textQuoteWrap.replaceChildren(h('div', { class: 'quote' }, h('div', { class: 'ln' }, h('span', {}, 'Template composer'), h('span', {}, '$0')), h('div', { class: 'small' }, 'Free, but simple. Choose an OpenRouter model for original concepts.'))); return; }
-    const qb = quoteBox(() => ({ textModel: c.textModel })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
+    const qb = quoteBox(() => ({ textModel: c.textModel, textCalls: c.variants * (c.polish ? 2 : 1) })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
   };
   drawTextQuote();
   const go = h('button', { class: 'primary', style: 'width:100%', disabled: c.busy || !(c.productId && c.actorId), onclick: guard(async (e) => {
     c.busy = true; e.target.disabled = true; e.target.textContent = 'Composing…';
     try {
-      const res = await api('POST', 'compose', { ...c, textModel: c.textModel || undefined });
+      const res = await api('POST', 'compose', { ...c, framework: c.framework || undefined, camera: c.camera || undefined, look: c.look || undefined, textModel: c.textModel || undefined });
       res.concepts.forEach((x) => (x.render = defaultRender(c.platform)));
       c.result = res; await refreshLight();
     } finally { c.busy = false; render(); }
@@ -89,13 +100,17 @@ function viewCompose() {
     h('label', {}, 'Product'), entityPicker(state.products, () => c.productId, (id) => { c.productId = id; go.disabled = !(c.productId && c.actorId); }, 'Add a product in the Library first.'),
     h('label', {}, 'Actor'), entityPicker(state.actors, () => c.actorId, (id) => { c.actorId = id; go.disabled = !(c.productId && c.actorId); }, 'Add an actor in the Library first.'),
     h('label', {}, 'Platform'), chips(Object.keys(state.meta.platforms), () => c.platform, (v) => (c.platform = v), (k) => state.meta.platforms[k].split(' (')[0]),
-    h('label', {}, 'Visual style'), chips(Object.keys(state.meta.formats), () => c.format, (v) => (c.format = v), (k) => state.meta.formats[k]),
-    h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Tone'), h('input', { value: c.tone, oninput: (e) => (c.tone = e.target.value) })), h('div', {}, h('label', {}, 'Call to action'), h('input', { value: c.cta, oninput: (e) => (c.cta = e.target.value) }))),
+    h('label', {}, 'Ad structure'), chips(['', ...Object.keys(state.meta.formats)], () => c.framework, (v) => (c.framework = v), (k) => (k ? state.meta.formats[k] : 'Auto (mix)')),
+    h('div', { class: 'row' },
+      h('div', {}, h('label', {}, 'Camera'), h('select', { onchange: (e) => (c.camera = e.target.value) }, h('option', { value: '' }, 'Auto'), state.meta.cameras.map((x) => h('option', { value: x.id, selected: c.camera === x.id }, x.label)))),
+      h('div', {}, h('label', {}, 'Look'), h('select', { onchange: (e) => (c.look = e.target.value) }, h('option', { value: '' }, 'Auto (fits structure)'), state.meta.looks.map((x) => h('option', { value: x.id, selected: c.look === x.id }, x.label))))),
+    h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Tone'), h('input', { value: c.tone, oninput: (e) => (c.tone = e.target.value) })), h('div', {}, h('label', {}, 'Call to action'), h('input', { placeholder: 'from Brand settings', value: c.cta, oninput: (e) => (c.cta = e.target.value) }))),
     h('label', {}, 'Brief'), h('textarea', { placeholder: 'Offer, audience, what to emphasise, what to avoid…', oninput: (e) => (c.brief = e.target.value) }, c.brief),
     h('div', { class: 'row' },
-      h('div', {}, h('label', {}, 'Concepts'), h('input', { type: 'number', min: '1', max: '4', value: c.variants, oninput: (e) => (c.variants = Number(e.target.value) || 1) })),
+      h('div', {}, h('label', {}, 'Concepts'), h('input', { type: 'number', min: '1', max: '4', value: c.variants, oninput: (e) => { c.variants = Number(e.target.value) || 1; drawTextQuote(); } })),
       h('div', {}, h('label', {}, 'Scenes each'), h('input', { type: 'number', min: '1', max: '5', value: c.scenes, oninput: (e) => (c.scenes = Number(e.target.value) || 1) })),
       h('div', {}, h('label', {}, 'Seconds / scene'), h('input', { type: 'number', min: '2', max: '15', value: c.sceneSeconds, oninput: (e) => (c.sceneSeconds = Number(e.target.value) || 5) }))),
+    h('label', {}, 'Quality'), chips([false, true], () => c.polish, (v) => { c.polish = v; drawTextQuote(); }, (v) => (v ? 'Polish pass (best, 2× writing cost)' : 'Standard')),
     h('label', {}, 'Writing model (OpenRouter)'),
     modelPicker({ kind: 'text', value: c.textModel, noneLabel: 'Free template (no AI)', onChange: (id) => { c.textModel = id; drawTextQuote(); } }),
     noModels ? h('p', { class: 'small' }, 'No text models loaded. Add your OpenRouter key in Settings, then press “Refresh OpenRouter list” in Models.') : null,
@@ -103,18 +118,27 @@ function viewCompose() {
 
   const right = c.result
     ? h('div', {}, h('div', { class: 'row', style: 'margin-bottom:12px' }, h('h2', { style: 'margin:0' }, `${c.result.concepts.length} concept${c.result.concepts.length > 1 ? 's' : ''}`),
-        h('span', { class: 'small fit' }, `Written by ${c.result.source} · cost ${money(c.result.usd)}${c.result.basis ? ` (${c.result.basis})` : ''}`)),
+        h('span', { class: 'small fit' }, `Written by ${c.result.source} · ${c.result.calls ? c.result.calls + ' call' + (c.result.calls > 1 ? 's' : '') + ' · ' : ''}cost ${money(c.result.usd)}${c.result.basis ? ` (${c.result.basis})` : ''}${c.result.failed ? ` · ${c.result.failed} version(s) failed` : ''}`)),
       c.result.concepts.map(conceptCard))
     : h('div', { class: 'panel empty' }, 'Pick a product and actor, describe the ad, and compose. You’ll get editable concepts with scripts, scene prompts and captions, each with a price before you render.');
   return h('div', {}, h('h1', {}, 'Ad Composer'), h('p', { class: 'sub' }, 'A text model of your choice writes the ad. You review it, pick image and video models, see the exact estimate, then render.'), h('div', { class: 'cols' }, left, right));
 }
 
+// Same wording the composer uses, so manual prompts get the same proven phrasing.
+const CAMERA_TEXT = { dolly_in: 'slow smooth dolly in toward the subject', dolly_out: 'slow dolly out revealing more of the scene', orbit: 'camera slowly orbits around the subject, subject stays centered', handheld: 'natural handheld camera with subtle sway, selfie-style framing', crane_up: 'camera cranes upward and tilts down, revealing the scene', tracking: 'camera tracks sideways, keeping pace with the subject', whip_pan: 'fast whip pan to the subject, settling into a steady frame', macro_slide: 'macro lens, camera slides slowly across the surface detail', rack_focus: 'rack focus from foreground to the product', push_in_tilt: "slow push-in while tilting up to the subject's face", fpv: 'smooth first-person fly-through toward the subject', static: 'static locked-off camera, only the subject moves' };
+const LOOK_TEXT = { ugc: 'shot on a smartphone, natural light, casual authentic setting', natural: 'soft natural window light, real-life setting, true-to-life colors', studio: 'clean studio, soft key light, shallow depth of field, premium commercial look', golden: 'warm golden hour sunlight, soft long shadows', neon: 'night scene with colorful neon practical lights, cinematic contrast', luxe: 'moody cinematic lighting, rich contrast, high-end campaign look', macro: 'macro photography, crisp texture detail, soft background blur', bright: 'bright airy interior, white and pastel tones, soft diffused light' };
+
 function viewStudio() {
   const s = state.studio;
+  if (!s.productId && state.products.length === 1) s.productId = state.products[0].id;
+  if (!s.actorId && state.actors.length === 1) s.actorId = state.actors[0].id;
   if (!s.init) {
     const d = state.settings.defaults;
     Object.assign(s, { init: true, imageModel: d.image || null, videoModel: d.video || null, withVideo: !!d.video, imagePrompt: '@actor holding @product, bright studio, soft light, photorealistic, product label clearly visible.', motionPrompt: 'slow push-in, the person smiles and shows the product to camera.' });
   }
+  const imgBox = h('textarea', { style: 'min-height:110px', oninput: (e) => (s.imagePrompt = e.target.value) }, s.imagePrompt);
+  const motBox = h('textarea', { oninput: (e) => (s.motionPrompt = e.target.value) }, s.motionPrompt);
+  const addTo = (box, key, text) => { s[key] = `${s[key].replace(/[.,\s]+$/, '')}, ${text}`; box.value = s[key]; };
   const controls = renderControls(s, {
     getScenes: () => [{ seconds: s.duration }],
     label: 'Generate',
@@ -129,8 +153,10 @@ function viewStudio() {
       h('div', { class: 'panel' },
         h('label', {}, 'Product'), entityPicker(state.products, () => s.productId, (id) => (s.productId = id), 'Add a product in the Library first.'),
         h('label', {}, 'Actor'), entityPicker(state.actors, () => s.actorId, (id) => (s.actorId = id), 'Add an actor in the Library first.'),
-        h('label', {}, 'Image prompt'), h('textarea', { style: 'min-height:110px', oninput: (e) => (s.imagePrompt = e.target.value) }, s.imagePrompt),
-        h('label', {}, 'Motion prompt (video)'), h('textarea', { oninput: (e) => (s.motionPrompt = e.target.value) }, s.motionPrompt),
+        h('label', {}, 'Image prompt'), imgBox,
+        h('div', { class: 'chips', style: 'margin-top:6px' }, state.meta.looks.map((x) => h('button', { type: 'button', class: 'chip', title: LOOK_TEXT[x.id], onclick: () => addTo(imgBox, 'imagePrompt', LOOK_TEXT[x.id]) }, '+ ' + x.label))),
+        h('label', {}, 'Motion prompt (video)'), motBox,
+        h('div', { class: 'chips', style: 'margin-top:6px' }, state.meta.cameras.map((x) => h('button', { type: 'button', class: 'chip', title: CAMERA_TEXT[x.id], onclick: () => addTo(motBox, 'motionPrompt', CAMERA_TEXT[x.id]) }, '+ ' + x.label))),
         h('label', {}, 'Video length (seconds)'), h('input', { type: 'number', min: '2', max: '15', value: s.duration, oninput: (e) => { s.duration = Number(e.target.value) || 5; controls._q.update(); } })),
       h('div', { class: 'panel' }, controls)));
 }

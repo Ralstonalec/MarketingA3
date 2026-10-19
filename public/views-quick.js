@@ -31,7 +31,7 @@ function viewQuick() {
   const btn = h('button', { class: 'primary', disabled: true, style: 'width:100%;font-size:16px;padding:13px' }, 'Write & render my ad');
   const qb = quoteBox(() => {
     if (!q.productId || !q.actorId || !d.image) return null;
-    return { textModel: d.text || undefined, imageModel: d.image, videoModel: q.withVideo ? d.video : undefined, withVideo: q.withVideo, sceneSeconds: Array(q.variants * q.scenes).fill(5) };
+    return { textModel: d.text || undefined, textCalls: q.variants, imageModel: d.image, videoModel: q.withVideo ? d.video : undefined, withVideo: q.withVideo, sceneSeconds: Array(q.variants * q.scenes).fill(5) };
   }, (quote) => { btn.disabled = !quote; });
   const refreshQuote = () => qb.update();
   btn.addEventListener('click', guard(async () => {

@@ -9,6 +9,7 @@ const store = require('./lib/store');
 const settings = require('./lib/settings');
 const pipeline = require('./lib/pipeline');
 const composer = require('./lib/composer');
+const presets = require('./lib/presets');
 const catalog = require('./lib/catalog');
 const openrouter = require('./lib/openrouter');
 const engines = require('./lib/engines');
@@ -91,6 +92,11 @@ function authorize(req) {
 }
 
 // ---- entities (products and actors share the same shape) -------------------
+const lines = (v, max = 12) => (Array.isArray(v) ? v : String(v || '').split('\n')).map((x) => String(x).trim().slice(0, 240)).filter(Boolean).slice(0, max);
+/** Product details that make ads better: only facts listed here may be stated in an ad. */
+function productFields(b) {
+  return { facts: lines(b.facts), audience: String(b.audience || '').slice(0, 300), offer: String(b.offer || '').slice(0, 200), price: String(b.price || '').slice(0, 60), forbidden: String(b.forbidden || '').slice(0, 300), url: String(b.url || '').slice(0, 500) };
+}
 function entityRoutes(kind) {
   const list = () => store.db[kind];
   return {
@@ -100,8 +106,17 @@ function entityRoutes(kind) {
       if (!name) throw Object.assign(new Error('Name is required'), { code: 400 });
       if (!Array.isArray(body.images) || !body.images.length) throw Object.assign(new Error('Add at least one image'), { code: 400 });
       const images = body.images.slice(0, 4).map(store.saveDataUrl);
-      const item = { id: store.id(kind === 'products' ? 'prod' : 'act'), name, description: String(body.description || '').slice(0, 800), images, createdAt: new Date().toISOString() };
+      const item = { id: store.id(kind === 'products' ? 'prod' : 'act'), name, description: String(body.description || '').slice(0, 800), images, createdAt: new Date().toISOString(), ...(kind === 'products' ? productFields(body) : {}) };
       list().unshift(item); store.save();
+      return item;
+    },
+    update(id, body) {
+      const item = list().find((x) => x.id === id);
+      if (!item) return null;
+      if (typeof body.name === 'string' && body.name.trim()) item.name = body.name.trim().slice(0, 120);
+      if (typeof body.description === 'string') item.description = body.description.slice(0, 800);
+      if (kind === 'products') Object.assign(item, productFields({ ...item, ...body }));
+      store.save();
       return item;
     },
     remove(id) {
@@ -142,6 +157,7 @@ async function api(req, res, url) {
   if (entities[root]) {
     if (m === 'GET' && !idPart) return send(res, 200, entities[root].list());
     if (m === 'POST' && !idPart) return send(res, 201, await entities[root].create(await readJson(req)));
+    if (m === 'PUT' && idPart) { const u = entities[root].update(idPart, await readJson(req)); return send(res, u ? 200 : 404, u || { error: 'Not found' }); }
     if (m === 'DELETE' && idPart) return send(res, entities[root].remove(idPart) ? 200 : 404, { ok: true });
   }
 
@@ -174,7 +190,7 @@ async function api(req, res, url) {
     if (m === 'DELETE' && idPart) { pipeline.remove(idPart); return send(res, 200, { ok: true }); }
   }
   if (root === 'meta' && m === 'GET') {
-    return send(res, 200, { formats: Object.fromEntries(Object.entries(composer.FORMATS).map(([k, v]) => [k, v.label])), platforms: composer.PLATFORMS, ratios: pipeline.RATIOS });
+    return send(res, 200, { formats: composer.FORMATS, platforms: composer.PLATFORMS, ratios: pipeline.RATIOS, cameras: presets.list(presets.CAMERA), looks: presets.list(presets.LOOK) });
   }
   send(res, 404, { error: 'Not found' });
 }

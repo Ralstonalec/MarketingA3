@@ -73,3 +73,5 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px}.stat small{color:var(--mut);display:block}.stat b{font-size:24px;font-variant-numeric:tabular-nums}
 .tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
 svg.chart{width:100%;height:140px;display:block}.chart rect{fill:var(--acc)}.chart text{fill:var(--mut);font-size:10px}
+
+.card:has(.body textarea){grid-column:1/-1}.concept .quote .warn b{color:var(--err)}
