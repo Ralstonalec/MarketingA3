@@ -55,7 +55,7 @@ function jobCard(j) {
 }
 
 function viewGallery() {
-  if (!state.jobs.length && !state.runs.length) return h('div', {}, h('h1', {}, 'Gallery'), h('div', { class: 'empty' }, 'Nothing yet. Start with Quick Ad.'));
+  if (!state.jobs.length && !state.runs.length) return h('div', {}, h('h1', {}, 'Gallery'), h('div', { class: 'empty panel' }, h('div', {}, 'Nothing here yet.'), h('div', { class: 'btnrow' }, h('button', { class: 'primary', onclick: () => { state.view = 'quick'; render(); } }, 'Make your first ad'))));
   const groups = new Map();
   for (const j of state.jobs) { const k = j.campaignId || j.id; (groups.get(k) || groups.set(k, []).get(k)).push(j); }
   return h('div', {}, h('h1', {}, 'Gallery'), h('p', { class: 'sub' }, 'Scenes from the same concept are grouped together.'),

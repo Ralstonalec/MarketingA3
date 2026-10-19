@@ -19,6 +19,10 @@ function h(tag, props, ...kids) {
   for (const k of kids.flat()) if (k != null && k !== false) el.append(k.nodeType ? k : document.createTextNode(k));
   return el;
 }
+/** Tables scroll sideways inside their own box on small screens instead of widening the whole page. */
+const table = (...kids) => h('div', { class: 'tablewrap' }, h('table', {}, ...kids));
+const stackTable = (...kids) => h('div', { class: 'tablewrap stack' }, h('table', {}, ...kids)); // becomes cards on phones
+
 async function api(method, url, body) {
   const res = await fetch('/api/' + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await res.json().catch(() => ({}));

@@ -49,17 +49,33 @@ async function viewSettings() {
 }
 
 const NAV = [
+  ['sec', 'Start'], ['setup', 'Setup'],
   ['sec', 'Create'], ['quick', 'Quick Ad'], ['compose', 'Ad Composer'], ['studio', 'Studio'], ['tools', 'Tools'], ['gallery', 'Gallery'],
   ['sec', 'Manage'], ['library', 'Library'], ['models', 'Models'], ['knowledge', 'Knowledge'], ['spend', 'Spend'], ['settings', 'Settings'],
 ];
+const VIEWS = () => ({ setup: viewSetup, quick: viewQuick, tools: viewTools, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, knowledge: viewKnowledge, spend: viewSpend, settings: viewSettings });
+
+const side = document.querySelector('.side'), menuBtn = document.getElementById('menu'), scrim = document.getElementById('scrim');
+function setMenu(open) { side.classList.toggle('open', open); scrim.classList.toggle('on', open); menuBtn.setAttribute('aria-expanded', String(open)); menuBtn.textContent = open ? '✕' : '☰'; }
+menuBtn.addEventListener('click', () => setMenu(!side.classList.contains('open')));
+scrim.addEventListener('click', () => setMenu(false));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
+
+const skeleton = () => h('div', { class: 'skeleton', 'aria-busy': 'true', 'aria-label': 'Loading' }, h('i'), h('i'), h('i', { class: 'block' }), h('i'), h('i'));
 
 async function render() {
+  const prog = setupProgress();
   document.getElementById('nav').replaceChildren(...NAV.map(([k, label]) => k === 'sec' ? h('div', { class: 'sec' }, label)
-    : h('button', { class: state.view === k ? 'on' : '', onclick: () => { state.view = k; render(); } }, label)));
-  const views = { quick: viewQuick, tools: viewTools, compose: viewCompose, studio: viewStudio, gallery: viewGallery, library: viewLibrary, models: viewModels, knowledge: viewKnowledge, spend: viewSpend, settings: viewSettings };
+    : h('button', { class: state.view === k ? 'on' : '', 'aria-current': state.view === k ? 'page' : null, onclick: () => { state.view = k; setMenu(false); render(); } }, label,
+      k === 'setup' && !prog.complete ? h('span', { class: 'badge' }, `${prog.done}/${prog.total}`) : null)));
   const token = (render.token = (render.token || 0) + 1);
-  const el = await views[state.view]();
-  if (token === render.token) document.getElementById('main').replaceChildren(el);
+  const out = VIEWS()[state.view]();
+  const main = document.getElementById('main');
+  if (out && typeof out.then === 'function') main.replaceChildren(skeleton());   // data-backed screens show a placeholder while they load
+  const el = await out;
+  if (token !== render.token) return;
+  main.replaceChildren(el);
+  if (render.last !== state.view) { window.scrollTo(0, 0); render.last = state.view; }
 }
 document.getElementById('spendpill').addEventListener('click', () => { state.view = 'spend'; render(); });
 
@@ -73,5 +89,7 @@ setInterval(guard(async () => {
 guard(async () => {
   state.meta = await api('GET', 'meta');
   await Promise.all([refreshLight(), refreshModels()]);
+  state.keyChecks = await api('GET', 'accounts').then((a) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.check]))).catch(() => ({}));
+  if (!setupProgress().complete) state.view = 'setup';   // first visit lands on guided setup
   render();
 })();

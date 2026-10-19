@@ -2,21 +2,11 @@
 const quick = { productId: null, actorId: null, brief: '', platform: 'tiktok', variants: 1, scenes: 1, withVideo: null };
 
 function setupChecklist() {
-  const s = state.settings, d = s.defaults;
-  const items = [
-    ['Add your OpenRouter key', s.keys.openrouter.set, 'settings'],
-    ['Load models (Models → Refresh OpenRouter list)', state.models.some((m) => m.provider === 'openrouter'), 'models'],
-    ['Choose a default image model (Models → Make default)', !!d.image && d.image !== 'mock:image', 'models'],
-    ['Add a product', state.products.length > 0, 'library'],
-    ['Add an actor', state.actors.length > 0, 'library'],
-  ];
-  if (items.every((i) => i[1])) return null;
-  return h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', {}, 'Get ready'),
-    h('p', { class: 'small', style: 'margin-top:-8px' }, 'Do these once, then every ad is one click.'),
-    items.map(([label, ok, view]) => h('div', { class: 'row', style: 'padding:4px 0;gap:8px' },
-      h('span', { class: 'fit', style: `color:var(--${ok ? 'ok' : 'mut'})` }, ok ? '✓' : '○'),
-      h('span', { style: ok ? 'text-decoration:line-through;color:var(--mut)' : '' }, label),
-      ok ? null : h('button', { class: 'ghost fit', onclick: () => { state.view = view; render(); } }, 'Go →'))));
+  const prog = setupProgress();
+  if (prog.complete) return null;
+  return h('div', { class: 'panel', style: 'margin-bottom:16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap' },
+    h('div', { style: 'flex:1;min-width:200px' }, h('b', {}, `Setup ${prog.done} of ${prog.total}`), h('div', { class: 'bar' }, h('i', { style: `width:${(prog.done / prog.total) * 100}%` })), h('div', { class: 'small', style: 'margin-top:6px' }, 'Finish setup once, then every ad is one click.')),
+    h('button', { class: 'primary', onclick: () => { state.view = 'setup'; render(); } }, 'Continue setup'));
 }
 
 function viewQuick() {

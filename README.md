@@ -9,6 +9,10 @@ node server.js            # http://127.0.0.1:3000
 npm test
 ```
 
+## First run: guided Setup
+
+A new install opens on **Setup**, a short stepper that reads its status from the live app: add your keys (with a test), load OpenRouter models and import Higgsfield models with exact prices, choose default models (with the cost of a sample ad shown), optionally set a budget, and add a product and actor. Each step stays open after you act so you can see what it did. The sidebar shows progress until it is complete. The layout works on phones (menu drawer, stacked cards, no sideways scrolling).
+
 ## Quick Ad (the fast way)
 
 Pick a product and an actor, optionally type an idea, and click **Write & render my ad**. The app writes the concept with your default writing model, then renders every scene with your default image/video models. The full price is shown first, and your monthly budget cap is checked for the whole run before anything is spent. Set the defaults once on the Models page (*Make default*). The first-run checklist on the Quick Ad screen shows what's left to set up.

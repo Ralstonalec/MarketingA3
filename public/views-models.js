@@ -50,7 +50,7 @@ function openapiPanel() {
     const kinds = ['video', 'image', 'edit', 'upscale', 'lipsync', 'audio'];
     out.replaceChildren(
       h('p', { class: 'small' }, `${d.drafts.length} model endpoint(s) found at ${d.server}; ${d.skipped.length} shared endpoint(s) skipped. Check the type and notes, untick anything you do not want, then add.`),
-      h('div', { class: 'panel', style: 'padding:0;overflow:auto;max-height:420px' }, h('table', {}, h('tbody', {}, d.drafts.map((x, i) => h('tr', {},
+      h('div', { class: 'panel', style: 'padding:0;overflow:auto;max-height:420px' }, table(h('tbody', {}, d.drafts.map((x, i) => h('tr', {},
         h('td', {}, h('input', { type: 'checkbox', style: 'width:auto', checked: true, onchange: (e) => (pick[i] = e.target.checked) })),
         h('td', {}, x.label, h('div', { class: 'small' }, x.path)),
         h('td', {}, h('select', { onchange: (e) => (x.kind = e.target.value) }, kinds.map((k) => h('option', { value: k, selected: k === x.kind }, k)))),
@@ -125,7 +125,7 @@ function changesBanner() {
   const mine = new Set([...Object.values(state.settings.defaults), ...state.models.filter((m) => m.favorite).map((m) => m.id)]);
   return h('div', { class: 'panel', style: 'margin-bottom:16px;border-color:var(--warn)' }, h('div', { class: 'row' }, h('h2', { style: 'margin:0' }, `${ch.length} price change${ch.length > 1 ? 's' : ''} since your last look`),
     h('button', { class: 'sec fit', onclick: guard(async () => { await api('DELETE', 'price-changes'); await refreshModels(); render(); }) }, 'Dismiss')),
-    h('table', {}, h('tbody', {}, ch.slice(0, 8).map((c) => h('tr', {},
+    table(h('tbody', {}, ch.slice(0, 8).map((c) => h('tr', {},
       h('td', {}, c.label, mine.has(c.id) ? h('span', { class: 'tag est', style: 'margin-left:6px' }, 'you use this') : null, h('div', { class: 'small' }, c.field)),
       h('td', { class: 'num' }, `${fmtVal(c.from)} → ${fmtVal(c.to)}`),
       h('td', { class: 'num ' + (c.to > c.from ? 'warn' : '') }, c.pct == null ? '' : `${c.pct > 0 ? '+' : ''}${c.pct}%`),
@@ -175,7 +175,7 @@ function viewModels() {
       h('input', { placeholder: 'Search models…', value: ui.modelQuery, oninput: (e) => { ui.modelQuery = e.target.value; const p = e.target.selectionStart; render(); const i = document.querySelector('#main input[placeholder^="Search"]'); i.focus(); i.setSelectionRange(p, p); } }),
       h('label', { class: 'fit', style: 'display:flex;gap:6px;align-items:center;margin:0;white-space:nowrap' }, h('input', { type: 'checkbox', style: 'width:auto', checked: ui.showHidden, onchange: (e) => { ui.showHidden = e.target.checked; render(); } }), 'Show hidden'),
       h('select', { class: 'fit', onchange: (e) => { ui.modelProvider = e.target.value; render(); } }, providers.map((p) => h('option', { value: p, selected: p === ui.modelProvider }, p === 'all' ? 'All providers' : p)))),
-    h('div', { class: 'panel', style: 'padding:0;overflow:auto' }, shown.length ? h('table', {},
+    h('div', { class: 'panel', style: 'padding:0;overflow:auto' }, shown.length ? stackTable(
       h('thead', {}, h('tr', {}, h('th', {}, 'Model'), h('th', {}, 'Provider'), h('th', {}, 'Price'), h('th', {}, ''), h('th', {}, ''))),
       h('tbody', {}, shown.map((m) => h('tr', {},
         h('td', {}, m.favorite ? '★ ' : '', m.label, m.missing ? h('span', { class: 'tag unset', style: 'margin-left:6px', title: 'The provider no longer lists this model. Your history and prices are kept.' }, 'removed by provider') : null, m.hidden ? h('span', { class: 'tag', style: 'margin-left:6px' }, 'hidden') : null, h('div', { class: 'small' }, m.id.replace(/^[a-z]+:/, '')), (m.notes && m.notes.length) ? h('details', {}, h('summary', { class: 'small' }, `${m.notes.length} note(s) from import`), m.notes.map((n) => h('div', { class: 'small' }, n))) : null),

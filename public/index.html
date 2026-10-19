@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0e12">
 <title>Marketing A3</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
@@ -11,13 +12,16 @@
 <div class="app">
   <aside class="side">
     <div class="brand">Marketing <b>A3</b></div>
+    <button class="menu-btn" id="menu" aria-label="Open menu" aria-expanded="false" aria-controls="nav">☰</button>
     <nav id="nav"></nav>
     <button class="spendpill" id="spendpill" title="Open Spend"></button>
   </aside>
+  <div class="scrim" id="scrim"></div>
   <main id="main"></main>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="core.js"></script>
+<script src="views-setup.js"></script>
 <script src="views-library.js"></script>
 <script src="views-models.js"></script>
 <script src="views-compose.js"></script>

@@ -20,7 +20,7 @@ function reconcilePanel() {
       e.target.disabled = true; e.target.textContent = 'Asking OpenRouter…';
       try {
         const r = await api('GET', 'accounts/reconcile');
-        out.replaceChildren(h('table', {}, h('tbody', {},
+        out.replaceChildren(table(h('tbody', {},
           row(`OpenRouter says you used (${r.providerSource || 'n/a'})`, r.providerUsageUsd), row('This app recorded (OpenRouter models)', r.ledgerUsd, `${money(r.ledgerActualUsd)} actual, ${money(r.ledgerEstimatedUsd)} estimated`),
           row('Difference', r.driftUsd, r.driftUsd != null && Math.abs(r.driftUsd) > 0.01 ? (r.driftUsd > 0 ? 'OpenRouter shows more than this app recorded.' : 'This app recorded more than OpenRouter shows.') : 'Matches.'),
           row('Balance left', r.balanceUsd), r.keyLimitUsd != null ? row('Key spending limit', r.keyLimitUsd) : null)), h('p', { class: 'small' }, r.note));
@@ -44,11 +44,11 @@ async function viewSpend() {
     reconcilePanel(),
     h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, 'Last 30 days'), spendChart(s.days)),
     h('div', { class: 'cols', style: 'grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:16px' },
-      h('div', { class: 'panel' }, h('h2', {}, 'By model (this month)'), s.byModel.length ? h('table', {}, h('tbody', {}, s.byModel.map((r) => h('tr', {}, h('td', {}, name(r.key)), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, 'Nothing spent yet this month.')),
-      h('div', { class: 'panel' }, h('h2', {}, 'By type (this month)'), s.byKind.length ? h('table', {}, h('tbody', {}, s.byKind.map((r) => h('tr', {}, h('td', {}, r.key), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, '—'))),
+      h('div', { class: 'panel' }, h('h2', {}, 'By model (this month)'), s.byModel.length ? table(h('tbody', {}, s.byModel.map((r) => h('tr', {}, h('td', {}, name(r.key)), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, 'Nothing spent yet this month.')),
+      h('div', { class: 'panel' }, h('h2', {}, 'By type (this month)'), s.byKind.length ? table(h('tbody', {}, s.byKind.map((r) => h('tr', {}, h('td', {}, r.key), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'small' }, '—'))),
     h('div', { class: 'panel', style: 'margin-top:16px;padding:0;overflow:auto' },
       h('div', { style: 'padding:14px 18px 0' }, h('h2', {}, 'Recent charges')),
-      ledger.length ? h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'What'), h('th', {}, 'Model'), h('th', {}, 'Basis'), h('th', { class: 'num' }, 'Cost'))),
+      ledger.length ? table(h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'What'), h('th', {}, 'Model'), h('th', {}, 'Basis'), h('th', { class: 'num' }, 'Cost'))),
         h('tbody', {}, ledger.slice(0, 100).map((r) => h('tr', {}, h('td', {}, new Date(r.ts).toLocaleString()), h('td', {}, `${r.kind}${r.note ? ' · ' + r.note : ''}`), h('td', {}, name(r.model)),
           h('td', {}, h('span', { class: 'tag ' + (r.basis === 'actual' ? 'live' : 'est') }, r.basis)), h('td', { class: 'num' }, money(r.usd)))))) : h('div', { class: 'empty' }, 'No charges yet.')));
 }

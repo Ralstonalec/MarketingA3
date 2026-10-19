@@ -10,7 +10,7 @@ function reportView(r) {
     r.error ? h('div', { class: 'warn' }, r.error) : null,
     acc.length ? h('div', { class: 'chips', style: 'margin-bottom:10px' }, acc.map(([k, n]) => h('span', { class: 'tag live' }, `${SECTION_LABEL[k] || k}: ${n} accepted`))) : null,
     r.rejected.length ? [h('p', { class: 'small' }, `${r.rejected.length} item(s) rejected. They did not meet the evidence rules and will NOT be used:`),
-      h('table', {}, h('tbody', {}, r.rejected.slice(0, 80).map((x) => h('tr', {}, h('td', { class: 'small' }, SECTION_LABEL[x.section] || x.section), h('td', {}, x.id), h('td', { class: 'warn' }, x.reason)))))] : h('p', { class: 'small' }, 'Nothing was rejected.'));
+      table(h('tbody', {}, r.rejected.slice(0, 80).map((x) => h('tr', {}, h('td', { class: 'small' }, SECTION_LABEL[x.section] || x.section), h('td', {}, x.id), h('td', { class: 'warn' }, x.reason)))))] : h('p', { class: 'small' }, 'Nothing was rejected.'));
 }
 
 const STATUS_TEXT = { ok: ['live', 'Page found'], soft: ['unset', 'Redirects to the home page'], dead: ['unset', 'Page does not exist'], unreadable: ['est', 'Needs a human to read it'], blocked: ['est', 'Site blocks automated checks'], unreadable_: ['est', ''], unreachable: ['est', 'Could not reach it'], unchecked: ['', 'Not checked yet'] };
@@ -23,7 +23,7 @@ function heldView(k) {
   const nice = (h2) => (Array.isArray(h2.value) ? `${h2.value[0]}-${h2.value[1]} seconds` : typeof h2.value === 'number' ? `${h2.value} second(s)` : String(h2.value));
   return h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, 'Held back until confirmed'),
     h('p', { class: 'small', style: 'margin-top:-8px' }, 'Anything with a number in it is not used by the writer until its quote is found on the cited page, or you read the page and approve it.'),
-    h('table', {}, h('tbody', {}, held.map((x) => h('tr', {},
+    table(h('tbody', {}, held.map((x) => h('tr', {},
       h('td', {}, `${x.platform}: ${x.field}`, h('div', { class: 'small' }, nice(x))),
       h('td', {}, x.quote ? h('span', { class: 'small' }, `“${x.quote}”`) : h('span', { class: 'small warn' }, 'No quote supplied')),
       h('td', {}, statusTag(x.sourceStatus), x.source ? h('div', {}, h('a', { href: x.source, target: '_blank', rel: 'noopener noreferrer', class: 'small' }, 'open source')) : null),
@@ -35,7 +35,7 @@ function verifyView() {
   const v = kui.verify;
   if (!v) return null;
   return h('div', { class: 'panel', style: 'margin-top:16px' }, h('h2', {}, 'Source check'), h('p', { class: 'small', style: 'margin-top:-8px' }, `Checked ${new Date(v.at).toLocaleString()} from this computer.`),
-    h('table', {}, h('tbody', {}, v.results.map((r) => h('tr', {}, h('td', {}, statusTag(r.status), r.note ? h('div', { class: 'small' }, r.note) : null),
+    table(h('tbody', {}, v.results.map((r) => h('tr', {}, h('td', {}, statusTag(r.status), r.note ? h('div', { class: 'small' }, r.note) : null),
       h('td', { style: 'word-break:break-all' }, h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer', class: 'small' }, r.url)),
       h('td', { class: 'small' }, `${r.items.filter((i) => i.found === true).length} quote(s) found, ${r.items.filter((i) => i.found === false).length} not found`))))));
 }
