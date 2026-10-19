@@ -1,6 +1,6 @@
 'use strict';
 const TOOL_KINDS = ['edit', 'upscale', 'lipsync', 'audio'];
-const ui = { modelKind: 'text', modelQuery: '', modelProvider: 'all', showAdd: false, editing: null };
+const ui = { showApi: false, apiDrafts: null, apiUrl: 'https://docs.higgsfield.ai/docs/openapi.json', apiProvider: 'higgsfield', modelKind: 'text', modelQuery: '', modelProvider: 'all', showAdd: false, editing: null };
 
 // Call-config starting points. Field names come from how each API is generally documented;
 // ALWAYS check the provider's docs and use "Test" to see the real response before relying on one.
@@ -36,6 +36,39 @@ function templateFor(provider, kind) {
   if (!TOOL_BODY[kind]) return null;
   const base = (t.video || TEMPLATES.custom.video);
   return { submit: { url: base.submit.url.replace(/video$/, kind), headers: base.submit.headers || {}, body: TOOL_BODY[kind] }, poll: base.poll, resultPath: TOOL_RESULT[kind] };
+}
+
+/** Read a provider's OpenAPI spec from this computer and turn its endpoints into models. Review before adding. */
+function openapiPanel() {
+  const out = h('div', {});
+  const url = h('input', { value: ui.apiUrl, oninput: (e) => (ui.apiUrl = e.target.value) });
+  const prov = h('select', { onchange: (e) => (ui.apiProvider = e.target.value) }, [['higgsfield', 'Higgsfield'], ['custom', 'Other']].map(([v, l]) => h('option', { value: v, selected: ui.apiProvider === v }, l)));
+  const drawDrafts = () => {
+    const d = ui.apiDrafts;
+    if (!d) { out.replaceChildren(); return; }
+    const pick = d.drafts.map(() => true);
+    const kinds = ['video', 'image', 'edit', 'upscale', 'lipsync', 'audio'];
+    out.replaceChildren(
+      h('p', { class: 'small' }, `${d.drafts.length} model endpoint(s) found at ${d.server}; ${d.skipped.length} shared endpoint(s) skipped. Check the type and notes, untick anything you do not want, then add.`),
+      h('div', { class: 'panel', style: 'padding:0;overflow:auto;max-height:420px' }, h('table', {}, h('tbody', {}, d.drafts.map((x, i) => h('tr', {},
+        h('td', {}, h('input', { type: 'checkbox', style: 'width:auto', checked: true, onchange: (e) => (pick[i] = e.target.checked) })),
+        h('td', {}, x.label, h('div', { class: 'small' }, x.path)),
+        h('td', {}, h('select', { onchange: (e) => (x.kind = e.target.value) }, kinds.map((k) => h('option', { value: k, selected: k === x.kind }, k)))),
+        h('td', { class: 'small' }, `inputs: ${x.inputs.join(', ')}`),
+        h('td', { class: 'small' }, x.attention.length ? x.attention.map((a) => h('div', { class: 'warn' }, a)) : 'looks complete')))))),
+      h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'primary fit', onclick: guard(async () => {
+        const r = await api('POST', 'models/openapi/import', { provider: ui.apiProvider, drafts: d.drafts.filter((_, i) => pick[i]) });
+        toast(`Added ${r.added} model(s). Next: Get exact prices.`); ui.apiDrafts = null; ui.showApi = false; await refreshModels(); render();
+      }) }, 'Add selected models')));
+  };
+  drawDrafts();
+  return h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', {}, 'Import from an OpenAPI link'),
+    h('p', { class: 'small', style: 'margin-top:-8px' }, 'Reads the provider\'s machine-readable API spec from this computer and builds a model for every endpoint, using the provider\'s own field names. Use the openapi.json link, not the docs page.'),
+    h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Spec URL'), url), h('div', { class: 'fit' }, h('label', {}, 'Provider'), prov)),
+    h('button', { class: 'primary', style: 'margin-top:10px', onclick: guard(async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Reading spec…';
+      try { ui.apiDrafts = await api('POST', 'models/openapi/preview', { url: ui.apiUrl, provider: ui.apiProvider }); drawDrafts(); } finally { e.target.disabled = false; e.target.textContent = 'Read spec'; }
+    }) }, 'Read spec'), out);
 }
 
 function addModelPanel() {
@@ -82,6 +115,8 @@ function priceEditor(m) {
     m.price.basis === 'manual' && m.provider === 'openrouter' ? h('button', { class: 'sec fit', title: 'Go back to the live price', onclick: guard(async () => { await api('PUT', 'models/price', { id: m.id, price: null }); ui.editing = null; await refreshModels(); render(); }) }, 'Reset') : null);
 }
 
+const unpricedWithEstimate = () => state.models.filter((m) => m.estimate && !m.priced).length;
+
 function viewModels() {
   const d = state.settings.defaults;
   const rows = modelsOf(ui.modelKind === 'tools' ? TOOL_KINDS : ui.modelKind)
@@ -97,9 +132,14 @@ function viewModels() {
   }) }, 'Refresh OpenRouter list');
   return h('div', {},
     h('div', { class: 'row', style: 'margin-bottom:6px' }, h('div', {}, h('h1', {}, 'Models'), h('p', { class: 'sub', style: 'margin:0' }, `Every model you can use, with its price. ${state.modelsFetchedAt ? 'OpenRouter list updated ' + new Date(state.modelsFetchedAt).toLocaleString() + '.' : 'Add your OpenRouter key in Settings, then fetch the list.'}`)),
-      h('div', { class: 'fit row', style: 'justify-content:flex-end' }, refresh, h('button', { class: 'primary', onclick: () => { ui.showAdd = !ui.showAdd; render(); } }, ui.showAdd ? 'Close' : 'Add Higgsfield / custom model'))),
+      h('div', { class: 'fit row', style: 'justify-content:flex-end' }, refresh, h('button', { class: 'sec', onclick: () => { ui.showApi = !ui.showApi; render(); } }, ui.showApi ? 'Close import' : 'Import from OpenAPI'), h('button', { class: 'primary', onclick: () => { ui.showAdd = !ui.showAdd; render(); } }, ui.showAdd ? 'Close' : 'Add one by hand'))),
     h('div', { style: 'height:16px' }),
+    ui.showApi ? openapiPanel() : null,
     ui.showAdd ? addModelPanel() : null,
+    unpricedWithEstimate() ? h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('b', {}, `${unpricedWithEstimate()} model(s) have no price yet. `), 'These providers can quote the exact cost of a request before you run it. ', h('button', { class: 'primary', style: 'margin-left:8px', onclick: guard(async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Asking the provider…';
+      try { const r = await api('POST', 'models/estimate', { all: true }); const bad = r.results.filter((x) => !x.ok); toast(`${r.results.length - bad.length} priced${bad.length ? `, ${bad.length} failed (${bad[0].error})` : ''}`); await refreshModels(); render(); } finally { e.target.disabled = false; }
+    }) }, 'Get exact prices')) : null,
     h('div', { class: 'tabs' }, ['text', 'image', 'video', 'tools'].map((k) => h('button', { class: 'chip' + (ui.modelKind === k ? ' sel' : ''), onclick: () => { ui.modelKind = k; render(); } }, `${k[0].toUpperCase() + k.slice(1)} (${modelsOf(k === 'tools' ? TOOL_KINDS : k).length})`))),
     h('div', { class: 'row', style: 'margin-bottom:12px' },
       h('input', { placeholder: 'Search models…', value: ui.modelQuery, oninput: (e) => { ui.modelQuery = e.target.value; const p = e.target.selectionStart; render(); const i = document.querySelector('#main input[placeholder^="Search"]'); i.focus(); i.setSelectionRange(p, p); } }),
@@ -115,6 +155,10 @@ function viewModels() {
           await api('PUT', 'settings', { defaults: { [m.kind]: m.id } }); await refreshLight(); render(); toast(`${m.label} is now the default ${m.kind} model`);
         }) }, 'Make default')),
         h('td', { style: 'white-space:nowrap' },
+          m.estimate ? h('button', { class: 'ghost', title: 'Asks the provider what this costs. Nothing is generated or charged.', onclick: guard(async (e) => {
+            e.target.textContent = '…';
+            try { const r = (await api('POST', 'models/estimate', { id: m.id })).results[0]; toast(r.ok ? `Price set: ${r.detail}` : r.error); await refreshModels(); render(); } finally { e.target.textContent = 'Get price'; }
+          }) }, 'Get price') : null,
           h('button', { class: 'ghost', onclick: () => { ui.editing = ui.editing === m.id ? null : m.id; render(); } }, 'Price'),
           m.kind === 'text' || m.engine === 'http' ? h('button', { class: 'ghost', title: 'Sends one real request and may be billed', onclick: guard(async (e) => {
             e.target.textContent = '…';

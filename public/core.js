@@ -89,8 +89,8 @@ function priceText(m) {
 }
 function basisTag(m) {
   const b = !m.priced ? 'unset' : m.price.basis;
-  const text = { live: 'live price', 'live-estimate': 'estimate', manual: 'your price', unset: 'set price' }[b] || b;
-  const cls = { live: 'live', 'live-estimate': 'est', manual: 'manual', unset: 'unset' }[b] || '';
+  const text = { live: 'live price', 'live-estimate': 'estimate', 'provider-estimate': 'from provider', manual: 'your price', unset: 'set price' }[b] || b;
+  const cls = { live: 'live', 'live-estimate': 'est', 'provider-estimate': 'live', manual: 'manual', unset: 'unset' }[b] || '';
   return h('span', { class: `tag ${cls}`, title: b === 'live-estimate' ? 'Billed per output token; the real cost is recorded after each generation' : '' }, text);
 }
 

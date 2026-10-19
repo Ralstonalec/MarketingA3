@@ -48,13 +48,23 @@ const vidServer = http.createServer((req, res) => {
   req.on('end', () => {
     const send = (o, code = 200) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
     const port = vidServer.address().port;
+    if (req.method === 'POST' && req.url.startsWith('/estimate/')) {
+      const j = JSON.parse(body || '{}');
+      if (j.duration) return send({ credits: (0.5 * j.duration).toFixed(3), usd: (0.02 * j.duration).toFixed(3) });  // cost scales with length
+      return send({ credits: '1.500', usd: '0.094' });
+    }
     if (req.method === 'POST') {
       vidSeen.push({ auth: req.headers.authorization, idem: req.headers['idempotency-key'], j: JSON.parse(body) });
       if (JSON.parse(body).prompt === 'NSFWTEST') return send({ request_id: 'r2', status_url: `http://127.0.0.1:${port}/status-nsfw` });
       return send({ request_id: 'r1', status_url: `http://127.0.0.1:${port}/status/r1`, response_url: `http://127.0.0.1:${port}/out/r1` });
     }
     if (req.url === '/status-nsfw') return send({ status: 'nsfw' });
-    if (req.url.startsWith('/status')) { polls[req.url] = (polls[req.url] || 0) + 1; return send({ status: polls[req.url] < 2 ? 'in_progress' : 'completed' }); }
+    if (req.url.startsWith('/status')) {
+      polls[req.url] = (polls[req.url] || 0) + 1;
+      if (polls[req.url] < 2) return send({ status: 'in_progress' });
+      // like Higgsfield's documented response, the finished output is inside the status response itself
+      return send({ status: 'completed', video: { url: `http://127.0.0.1:${port}/file.mp4` }, images: [{ url: `http://127.0.0.1:${port}/file.png` }] });
+    }
     if (req.url.startsWith('/out')) return send({ video: { url: `http://127.0.0.1:${port}/file.mp4` } });
     res.writeHead(200, { 'content-type': 'video/mp4' }); res.end(Buffer.from('FAKEMP4'));
   });
@@ -747,4 +757,94 @@ test('shipped starter packs pass their own evidence gate with nothing rejected, 
   assert.doesNotMatch(prompt, /Ideal length/);
   assert.equal((await call('POST', '/api/knowledge', { starter: '../../etc/passwd' })).status, 404);
   await call('DELETE', '/api/knowledge');
+});
+
+// ---- OpenAPI import + provider estimates -------------------------------------------------------
+test('OpenAPI import: model endpoints become configs from the spec; shared endpoints are skipped; unknowns are flagged', async () => {
+  process.env.A3_ALLOW_LOOPBACK_URL_IMPORT = '1';
+  const root = `http://127.0.0.1:${vidServer.address().port}`;
+  const spec = {
+    openapi: '3.1.0', info: { title: 'Fake Higgsfield', version: '2.0.0' }, servers: [{ url: root }],
+    components: {
+      securitySchemes: { authKey: { type: 'apiKey', in: 'header', name: 'Authorization', description: 'Use `Key {api_key_id}:{api_key_secret}`.' } },
+      schemas: { VideoReq: { type: 'object', required: ['prompt', 'image_url', 'duration'], properties: {
+        prompt: { type: 'string' }, image_url: { type: 'string' }, duration: { type: 'integer', enum: [5, 10] },
+        aspect_ratio: { type: 'string', enum: ['9:16', '16:9'] }, resolution: { type: 'string', enum: ['720p', '1080p'], default: '720p' }, seed: { type: 'integer' } } } },
+    },
+    paths: {
+      '/acme/kling/v2/pro/image-to-video': { post: { summary: 'Kling 2 Pro image to video', parameters: [{ name: 'Idempotency-Key', in: 'header' }], requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/VideoReq' } } } } } },
+      '/acme/soul/v2/standard': { post: { summary: 'Soul text to image', requestBody: { content: { 'application/json': { schema: { type: 'object', required: ['prompt', 'style_id'], properties: { prompt: { type: 'string' }, aspect_ratio: { type: 'string', enum: ['3:4', '4:5'] }, style_id: { type: 'string', enum: ['s1', 's2'] } } } } } } } },
+      '/acme/mystery/thing': { post: { summary: 'Mystery', requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { foo: { type: 'string' } } } } } } } },
+      '/requests/{request_id}/status': { get: {} }, '/requests/{request_id}/cancel': { post: {} }, '/estimate/{model_path}': { post: {} },
+    },
+  };
+  const specServer = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(spec)); });
+  await new Promise((r) => specServer.listen(0, '127.0.0.1', r));
+  try {
+    const prev = await call('POST', '/api/models/openapi/preview', { url: `http://127.0.0.1:${specServer.address().port}/openapi.json` });
+    assert.equal(prev.status, 200, JSON.stringify(prev.body));
+    assert.equal(prev.body.drafts.length, 3);
+    assert.equal(prev.body.skipped.length, 2);                                     // cancel and estimate (status is a GET, never a candidate)
+    const by = Object.fromEntries(prev.body.drafts.map((d) => [d.label, d]));
+    const v = by['Kling 2 Pro image to video'];
+    assert.equal(v.kind, 'video');
+    assert.deepEqual(v.inputs, ['prompt', 'image', 'duration', 'ratio']);
+    assert.deepEqual(v.http.submit.body, { prompt: '{{prompt}}', image_url: '{{image}}', duration: '{{duration}}', aspect_ratio: '{{ratio}}' });   // optional fields not sent
+    assert.equal(v.http.submit.headers.Authorization, 'Key {{apiKey}}');
+    assert.equal(v.http.submit.headers['Idempotency-Key'], '{{idempotencyKey}}');
+    assert.equal(v.http.resultPath, 'video.url');
+    assert.equal(v.http.poll.url, '{{submit.status_url}}');
+    assert.deepEqual(v.limits.durations, [5, 10]);
+    const img = by['Soul text to image'];
+    assert.equal(img.kind, 'image');
+    assert.equal(img.http.submit.body.aspect_ratio, '{{ratio}}');                    // overlaps ours, so it stays a placeholder...
+    assert.deepEqual(img.limits.ratios, ['3:4', '4:5']);                             // ...and the allowed list is kept so requests can be snapped to it
+    assert.equal(img.http.submit.body.style_id, 's1');
+    assert.ok(img.attention.some((a) => /allowed ratios/.test(a)) && img.attention.some((a) => /style_id/.test(a)));
+    assert.equal(img.http.resultPath, 'images.0.url');
+    assert.equal(by.Mystery.guessedKind, false);
+    assert.ok(by.Mystery.attention.some((a) => /could not tell/.test(a)));
+    assert.equal((await call('POST', '/api/models/openapi/preview', { url: 'http://127.0.0.1:1/x' })).status, 400);   // unreachable
+    assert.equal((await call('POST', '/api/models/openapi/preview', { spec: { paths: {} } })).status, 400);
+
+    const imp = await call('POST', '/api/models/openapi/import', { provider: 'higgsfield', drafts: prev.body.drafts.filter((d) => d.label !== 'Mystery') });
+    assert.equal(imp.status, 201);
+    assert.equal(imp.body.added, 2);
+    const models = (await call('GET', '/api/models')).body.models;
+    const kling = models.find((m) => m.label === 'Kling 2 Pro image to video');
+    assert.equal(kling.priced, false);                                               // no guessed price
+    assert.equal(kling.estimate.url, `${root}/estimate/acme/kling/v2/pro/image-to-video`);
+
+    // exact prices from the provider's estimate endpoint
+    const est = (await call('POST', '/api/models/estimate', { all: true })).body.results;
+    assert.ok(est.every((r) => r.ok), JSON.stringify(est));
+    const after = Object.fromEntries((await call('GET', '/api/models')).body.models.filter((m) => m.estimate).map((m) => [m.label, m]));
+    assert.equal(after['Kling 2 Pro image to video'].price.unit, 'second');           // 5s = 0.10, 10s = 0.20 -> linear
+    assert.equal(after['Kling 2 Pro image to video'].price.usd, 0.02);
+    assert.equal(after['Kling 2 Pro image to video'].price.basis, 'provider-estimate');
+    assert.equal(after['Soul text to image'].price.unit, 'image');
+    assert.equal(after['Soul text to image'].price.usd, 0.094);
+    const q = (await call('POST', '/api/quote', { imageModel: 'mock:image', withVideo: true, videoModel: after['Kling 2 Pro image to video'].id, duration: 10 })).body;
+    assert.equal(q.usd, 0.2);                                                         // exact: 10s x $0.02
+    // requests are snapped to what the provider's spec allows, instead of failing
+    const soul = after['Soul text to image'], kl = after['Kling 2 Pro image to video'];
+    const r1 = (await call('POST', '/api/runs', { modelId: soul.id, prompt: 'x', ratio: '9:16' })).body;
+    const d1 = await waitRun(r1.id); assert.equal(d1.status, 'done', d1.error);
+    assert.equal(vidSeen.at(-1).j.aspect_ratio, '3:4');                               // 9:16 is not allowed; 3:4 is the closest allowed shape
+    const r2 = (await call('POST', '/api/runs', { modelId: kl.id, prompt: 'x', image: { upload: prod.images[0] }, duration: 8, ratio: '1:1' })).body;
+    const d2 = await waitRun(r2.id); assert.equal(d2.status, 'done', d2.error);
+    assert.equal(vidSeen.at(-1).j.duration, 10);                                       // 8s is not allowed (5 or 10): nearest is 10
+    assert.equal(vidSeen.at(-1).j.aspect_ratio, '9:16');                               // 1:1 is not allowed; 9:16 is nearer than 16:9
+    const manual = (await call('PUT', '/api/models/price', { id: kling.id, price: { usd: 0.5, unit: 'second' } })).body;
+    assert.equal(manual.price.basis, 'manual');                                       // a price you type is labelled as yours
+  } finally { specServer.close(); delete process.env.A3_ALLOW_LOOPBACK_URL_IMPORT; }
+});
+
+test('estimates refuse models that need a video/audio file and report provider errors per model', async () => {
+  const noEst = (await call('POST', '/api/models/estimate', { id: 'mock:image' })).body.results[0];
+  assert.equal(noEst.ok, false); assert.match(noEst.error, /no estimate endpoint/);
+  const m = (await call('POST', '/api/models', { provider: 'higgsfield', kind: 'lipsync', label: 'Needs Audio', inputs: ['image', 'audio'], price: null,
+    http: { submit: { url: `http://127.0.0.1:${vidServer.address().port}/run`, headers: {}, body: { audio_url: '{{audio}}' } }, resultPath: 'video.url' }, estimate: { url: `http://127.0.0.1:${vidServer.address().port}/estimate/x` } })).body;
+  const r = (await call('POST', '/api/models/estimate', { id: m.id })).body.results[0];
+  assert.equal(r.ok, false); assert.match(r.error, /real audio file/);
 });

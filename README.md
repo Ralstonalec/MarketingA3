@@ -60,6 +60,14 @@ The **Tools** page runs any model you register on the Models page: image edit / 
 
 Copied from docs.higgsfield.ai: base URL `https://api.higgsfield.ai`; `Authorization: Key <key id>:<secret>` (check the exact format on their Authentication page; legacy `hf-api-key` / `hf-secret` headers also work); one asynchronous lifecycle: submit, then poll the returned `status_url` until `completed` (statuses: `queued`, `in_progress`, `completed`, `failed`, `nsfw`, `canceled`); the finished video is at `video.url`; successful requests are charged in credits, **failed and `nsfw` requests are not charged**; output is kept for at least 7 days (this app saves your own copy). Each model has its own submit path and body, so copy those from the model's page and use **Test**. Submits send an `Idempotency-Key` when your config includes `"Idempotency-Key": "{{idempotencyKey}}"`, so a retried submit is not billed twice.
 
+### Import every Higgsfield model from its OpenAPI spec
+
+Models → **Import from OpenAPI**. The app reads the spec from your computer (Higgsfield documents `https://docs.higgsfield.ai/docs/openapi.json`; use the JSON link, not the docs page), builds one model per endpoint using the spec's own field names, and shows a review table with notes (fixed values it had to choose, allowed durations and ratios, anything it could not classify). Requests are later snapped to the allowed ratios and durations in the spec instead of failing.
+
+### Exact prices
+
+Higgsfield documents `POST /estimate/{model-path}`, which takes the same body as a real request and returns the cost (`{"credits": "1.500", "usd": "0.094"}`). **Get exact prices** (or *Get price* on a row) calls it with realistic sample values and stores the result, tagged *from provider*. For models with a length input it asks for two lengths: if cost scales with length it becomes a per-second price, otherwise a flat price for the shorter length. Models that need a real video or audio file cannot be estimated automatically; set those by hand. Assumption to check on your account: the docs describe estimating as a pre-submit step, but do not say whether calls are rate-limited.
+
 ## Adding Higgsfield and other models
 
 Models page → *Add Higgsfield / custom model*. Each model is a name, a price and a JSON call config:

@@ -18,6 +18,8 @@ const autopilot = require('./lib/autopilot');
 const importer = require('./lib/importer');
 const runs = require('./lib/runs');
 const knowledge = require('./lib/knowledge');
+const openapi = require('./lib/openapi');
+const { safeGet } = require('./lib/safefetch');
 const postkit = require('./lib/postkit');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -175,6 +177,32 @@ async function api(req, res, url) {
   // Model ids contain "/" and ":", so they travel in the body or query string, not the path.
   if (root === 'models') {
     if (m === 'GET') return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() });
+    if (m === 'POST' && idPart === 'openapi' && action === 'preview') {
+      const b = await readJson(req);
+      let spec = b.spec;
+      if (!spec) {
+        const r = await safeGet(String(b.url || ''), { maxBytes: 12 * 1024 * 1024, timeoutMs: 20000, accept: 'application/json,*/*' });
+        try { spec = JSON.parse(r.body.toString('utf8')); } catch { throw Object.assign(new Error('That address did not return JSON. Use the openapi.json link, not the docs page.'), { code: 400 }); }
+      }
+      return send(res, 200, openapi.fromSpec(spec, { provider: b.provider || 'higgsfield' }));
+    }
+    if (m === 'POST' && idPart === 'openapi' && action === 'import') {
+      const b = await readJson(req), added = [];
+      for (const d of (Array.isArray(b.drafts) ? b.drafts : []).slice(0, 200)) {
+        added.push(catalog.addModel({ provider: b.provider || 'higgsfield', kind: d.kind, label: d.label, price: null, inputs: d.inputs, http: d.http, estimate: d.estimate, limits: d.limits, notes: d.attention }));
+      }
+      return send(res, 201, { added: added.length, models: added.map((x) => ({ id: x.id, label: x.label, kind: x.kind })) });
+    }
+    if (m === 'POST' && idPart === 'estimate') {
+      const b = await readJson(req);
+      const ids = b.all ? catalog.all().filter((x) => x.estimate && !x.priced).map((x) => x.id) : [b.id];
+      const out = [];
+      for (const id of ids.slice(0, 60)) {
+        try { const r = await engines.estimatePrice(catalog.get(id)); catalog.setProviderPrice(id, r.price); out.push({ id, ok: true, price: r.price, detail: r.detail }); }
+        catch (e) { out.push({ id, ok: false, error: e.message }); }
+      }
+      return send(res, 200, { results: out });
+    }
     if (m === 'POST' && idPart === 'refresh') { await openrouter.refreshModels(); return send(res, 200, { fetchedAt: openrouter.cachedModels().fetchedAt, models: catalog.all() }); }
     if (m === 'POST' && !idPart) return send(res, 201, catalog.addModel(await readJson(req)));
     if (m === 'PUT' && idPart === 'price') { const b = await readJson(req); return send(res, 200, catalog.setPrice(b.id, b.price)); }
