@@ -1,0 +1,12 @@
+{
+  "name": "marketing-a3",
+  "version": "0.1.0",
+  "description": "Self-hosted AI ad studio: bring your own API keys, products and actors.",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/e2e.test.js"
+  }
+}
