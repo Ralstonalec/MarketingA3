@@ -46,13 +46,17 @@ function keyBox(name, label, hint, link, idx) {
 
 async function setupHiggsfield(btn, idx) {
   const log = setupUi.log = [];
+  setupUi.review = null;
   try {
     btn.disabled = true; btn.textContent = 'Reading the spec…';
     const prev = await api('POST', 'models/openapi/preview', { url: setupUi.hfUrl, provider: 'higgsfield' });
-    const good = prev.drafts.filter((d) => d.guessedKind), skipped = prev.drafts.length - good.length;
-    log.push(`Found ${prev.drafts.length} model endpoints.`);
+    const st = prev.stats, good = prev.drafts.filter((d) => d.guessedKind), rest = prev.drafts.filter((d) => !d.guessedKind);
+    log.push(`The spec lists ${st.paths} endpoints: ${st.models} models, ${st.shared} shared by every model, ${st.skipped} skipped.`);
     const imp = await api('POST', 'models/openapi/import', { provider: 'higgsfield', specUrl: setupUi.hfUrl, drafts: good });
-    log.push(`Added ${imp.added}${skipped ? `; ${skipped} need you to pick their type (Models → Import from OpenAPI)` : ''}.`);
+    log.push(`Added ${imp.added} model(s) whose type was clear.`);
+    if (rest.length) log.push(`${rest.length} more need you to choose their type: ${rest.slice(0, 6).map((d) => d.label).join(', ')}${rest.length > 6 ? '…' : ''}.`);
+    if (st.skipped) log.push(`${st.skipped} endpoint(s) were skipped; the review shows why.`);
+    setupUi.review = prev;                                   // keep the full result so "Review all" shows everything, not a subset
     if (state.settings.keys.higgsfield.set) {
       btn.textContent = 'Asking Higgsfield for prices…';
       const est = await api('POST', 'models/estimate', { all: true });
@@ -83,7 +87,8 @@ function setStepBody(id, idx) {
       h('div', { class: 'small', style: 'margin-bottom:8px' }, 'Reads Higgsfield\'s own API spec and builds a model for each endpoint, then asks Higgsfield for exact prices.'),
       h('input', { value: setupUi.hfUrl, 'aria-label': 'Higgsfield OpenAPI spec address', oninput: (e) => (setupUi.hfUrl = e.target.value) }), h('div', { style: 'margin-top:8px' }, hfBtn),
       hf.length ? h('div', { class: 'kv' }, h('span', { class: 'tag live' }, `${hf.length} Higgsfield model(s)`), h('span', {}, `${hf.filter((m) => m.priced).length} priced`)) : null,
-      setupUi.log.length ? h('div', { class: 'small', style: 'margin-top:8px' }, setupUi.log.map((l) => h('div', { class: /^Problem/.test(l) ? 'warn' : '' }, l))) : null];
+      setupUi.log.length ? h('div', { class: 'small', style: 'margin-top:8px' }, setupUi.log.map((l) => h('div', { class: /^Problem/.test(l) ? 'warn' : '' }, l))) : null,
+      setupUi.review ? h('div', { style: 'margin-top:8px' }, h('button', { class: 'sec', onclick: () => { ui.apiDrafts = setupUi.review; ui.apiUrl = setupUi.hfUrl; ui.apiProvider = 'higgsfield'; ui.showApi = true; state.view = 'models'; render(); } }, 'Review all endpoints and pick which to add')) : null];
   }
   if (id === 'defaults') {
     const set = (k) => guard(async (id2) => { await api('PUT', 'settings', { defaults: { [k]: id2 || '' } }); setupUi.open = idx; await refreshLight(); render(); });

@@ -790,7 +790,8 @@ test('OpenAPI import: model endpoints become configs from the spec; shared endpo
     const prev = await call('POST', '/api/models/openapi/preview', { url: `http://127.0.0.1:${specServer.address().port}/openapi.json` });
     assert.equal(prev.status, 200, JSON.stringify(prev.body));
     assert.equal(prev.body.drafts.length, 3);
-    assert.equal(prev.body.skipped.length, 2);                                     // cancel and estimate (status is a GET, never a candidate)
+    assert.equal(prev.body.skipped.length, 3);                                     // status (a GET), cancel and estimate: all listed, none silently ignored
+    assert.equal(prev.body.stats.models, 3); assert.equal(prev.body.stats.shared, 2); assert.equal(prev.body.stats.unclassified, 1);
     const by = Object.fromEntries(prev.body.drafts.map((d) => [d.label, d]));
     const v = by['Kling 2 Pro image to video'];
     assert.equal(v.kind, 'video');
@@ -1048,4 +1049,40 @@ test('safe fetch works on real HOSTNAMES (pinned lookup shape), not just IP lite
     const res = await safeGet(`http://localhost:${srv.address().port}/`);
     assert.equal(res.body.toString(), 'hello');
   } finally { srv.close(); delete process.env.A3_ALLOW_LOOPBACK_URL_IMPORT; }
+});
+
+test('OpenAPI import finds endpoints in real-world spec styles and explains every one it skips', async () => {
+  const { fromSpec } = require('../lib/openapi');
+  const reqBody = { type: 'object', required: ['prompt'], properties: { prompt: { type: 'string' }, aspect_ratio: { type: 'string', enum: ['9:16', '16:9'] } } };
+  const spec = {
+    openapi: '3.1.0', info: { title: 'x', version: '1' }, servers: [{ url: 'https://api.example.com' }],
+    components: {
+      requestBodies: { ImageBody: { content: { 'application/json; charset=utf-8': { schema: { $ref: '#/components/schemas/Img' } } } } },
+      schemas: { Img: reqBody },
+      parameters: { ModelParam: { name: 'model', in: 'path', required: true, schema: { type: 'string', enum: ['kling-pro', 'veo-3', 'seedance-lite'] } } },
+    },
+    paths: {
+      '/a/soul/text-to-image': { post: { summary: 'Soul text to image', requestBody: { $ref: '#/components/requestBodies/ImageBody' } } },        // $ref'd body + charset content type
+      '/video/{model}/generate': { parameters: [{ $ref: '#/components/parameters/ModelParam' }], post: { summary: 'Video generate', requestBody: { content: { 'application/json': { schema: { type: 'object', required: ['prompt', 'image_url'], properties: { prompt: { type: 'string' }, image_url: { type: 'string' } } } } } } } },
+      '/a/upload': { post: { summary: 'Upload', requestBody: { content: { 'multipart/form-data': { schema: { type: 'object' } } } } } },
+      '/a/{anything}/run': { post: { summary: 'Mystery', requestBody: { content: { 'application/json': { schema: reqBody } } } } },
+      '/a/ping': { post: { summary: 'Ping' } },
+      '/requests/{request_id}/status': { get: {} },
+      '/estimate/{path}': { post: {} },
+    },
+  };
+  const r = fromSpec(spec, { provider: 'higgsfield' });
+  const labels = r.drafts.map((d) => d.label);
+  assert.ok(labels.includes('Soul text to image'));                                       // found despite a $ref body and "; charset=utf-8"
+  assert.deepEqual(r.drafts.filter((d) => d.path.startsWith('/video/')).map((d) => d.path), ['/video/kling-pro/generate', '/video/veo-3/generate', '/video/seedance-lite/generate']);  // one model per allowed value
+  assert.equal(r.drafts.find((d) => d.path === '/video/veo-3/generate').http.submit.url, 'https://api.example.com/video/veo-3/generate');
+  assert.equal(r.drafts.find((d) => d.path === '/video/veo-3/generate').kind, 'video');
+  assert.equal(r.drafts.length, 4);
+  const why = Object.fromEntries(r.inventory.map((x) => [x.path, x]));
+  assert.match(why['/a/upload'].reason, /file upload/);                                   // every skip has a reason
+  assert.match(why['/a/{anything}/run'].reason, /no list of allowed values/);
+  assert.match(why['/a/ping'].reason, /no request body/);
+  assert.equal(why['/requests/{request_id}/status'].result, 'skipped');
+  assert.equal(why['/estimate/{path}'].result, 'shared');
+  assert.equal(r.stats.paths, 7); assert.equal(r.stats.models, 4); assert.equal(r.stats.skipped, 4); assert.equal(r.stats.shared, 1);
 });

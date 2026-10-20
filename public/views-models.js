@@ -48,16 +48,31 @@ function openapiPanel() {
     if (!d) { out.replaceChildren(); return; }
     const pick = d.drafts.map(() => true);
     const kinds = ['video', 'image', 'edit', 'upscale', 'lipsync', 'audio'];
-    out.replaceChildren(
-      h('p', { class: 'small' }, `${d.drafts.length} model endpoint(s) found at ${d.server}; ${d.skipped.length} shared endpoint(s) skipped. Check the type and notes, untick anything you do not want, then add.`),
-      h('div', { class: 'panel', style: 'padding:0;overflow:auto;max-height:420px' }, table(h('tbody', {}, d.drafts.map((x, i) => h('tr', {},
-        h('td', {}, h('input', { type: 'checkbox', style: 'width:auto', checked: true, onchange: (e) => (pick[i] = e.target.checked) })),
+    const st = d.stats || {};
+    const body = h('tbody', {});
+    let q = '';
+    const drawRows = () => {
+      const needle = q.trim().toLowerCase();
+      body.replaceChildren(...d.drafts.map((x, i) => ({ x, i })).filter(({ x }) => !needle || `${x.label} ${x.path}`.toLowerCase().includes(needle)).map(({ x, i }) => h('tr', {},
+        h('td', {}, h('input', { type: 'checkbox', style: 'width:auto', checked: pick[i], 'aria-label': `Add ${x.label}`, onchange: (e) => (pick[i] = e.target.checked) })),
         h('td', {}, x.label, h('div', { class: 'small' }, x.path)),
-        h('td', {}, h('select', { onchange: (e) => (x.kind = e.target.value) }, kinds.map((k) => h('option', { value: k, selected: k === x.kind }, k)))),
+        h('td', {}, h('select', { onchange: (e) => (x.kind = e.target.value), 'aria-label': 'Type' }, kinds.map((k) => h('option', { value: k, selected: k === x.kind }, k)))),
         h('td', { class: 'small' }, `inputs: ${x.inputs.join(', ')}`),
-        h('td', { class: 'small' }, x.attention.length ? x.attention.map((a) => h('div', { class: 'warn' }, a)) : 'looks complete')))))),
+        h('td', { class: 'small' }, x.attention.length ? x.attention.map((a2) => h('div', { class: 'warn' }, a2)) : 'looks complete'))));
+    };
+    drawRows();
+    const all = (on) => { pick.fill(on); drawRows(); };
+    out.replaceChildren(
+      h('div', { class: 'quote' }, h('div', {}, h('b', {}, `${st.paths ?? d.drafts.length} endpoints in the spec`), ` at ${d.server}`),
+        h('div', { class: 'small' }, `${st.models ?? d.drafts.length} models found${st.unclassified ? ` (${st.unclassified} need you to choose the type)` : ''} · ${st.shared || 0} shared by every model · ${st.skipped || 0} skipped`)),
+      h('div', { class: 'row' }, h('input', { type: 'search', placeholder: 'Search the models found…', 'aria-label': 'Search models found', oninput: (e) => { q = e.target.value; drawRows(); } }),
+        h('div', { class: 'fit row' }, h('button', { class: 'ghost', onclick: () => all(true) }, 'Select all'), h('button', { class: 'ghost', onclick: () => all(false) }, 'Select none'))),
+      h('div', { class: 'panel', style: 'padding:0;overflow:auto;max-height:420px;margin-top:8px' }, h('div', { class: 'tablewrap' }, h('table', {}, body))),
+      (d.skipped || []).length ? h('details', { style: 'margin-top:10px' }, h('summary', { class: 'small' }, `Why ${d.skipped.length} endpoint(s) were not turned into models`),
+        h('div', { class: 'tablewrap' }, h('table', {}, h('tbody', {}, d.skipped.map((x) => h('tr', {}, h('td', { class: 'small', style: 'word-break:break-all' }, x.path), h('td', { class: 'small' }, x.reason)))))))
+        : null,
       h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'primary fit', onclick: guard(async () => {
-        const r = await api('POST', 'models/openapi/import', { provider: ui.apiProvider, drafts: d.drafts.filter((_, i) => pick[i]) });
+        const r = await api('POST', 'models/openapi/import', { provider: ui.apiProvider, specUrl: ui.apiUrl, drafts: d.drafts.filter((_, i) => pick[i]) });
         toast(`Added ${r.added} model(s). Next: Get exact prices.`); ui.apiDrafts = null; ui.showApi = false; await refreshModels(); render();
       }) }, 'Add selected models')));
   };
