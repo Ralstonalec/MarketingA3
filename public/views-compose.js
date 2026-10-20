@@ -177,13 +177,13 @@ function viewCompose() {
   const textQuoteWrap = h('div', {});
   const drawTextQuote = () => {
     if (!c.textModel) { textQuoteWrap.replaceChildren(h('div', { class: 'quote' }, h('div', { class: 'ln' }, h('span', {}, 'Template composer'), h('span', {}, '$0')), h('div', { class: 'small' }, 'Free, but simple. Choose an OpenRouter model for original concepts.'))); return; }
-    const qb = quoteBox(() => ({ textModel: c.textModel, textCalls: c.variants * (c.polish ? 2 : 1) })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
+    const qb = quoteBox(() => ({ textModel: c.textModel, textCalls: c.variants * ((c.polish ? 2 : 1) + (c.direct ? 1 : 0)) })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
   };
   drawTextQuote();
   const go = h('button', { class: 'primary', style: 'width:100%', disabled: c.busy || !(c.productId && c.actorId), onclick: guard(async (e) => {
     c.busy = true; e.target.disabled = true; e.target.textContent = 'Composing…';
     try {
-      const res = await api('POST', 'compose', { ...c, framework: c.framework || undefined, camera: c.camera || undefined, look: c.look || undefined, textModel: c.textModel || undefined });
+      const res = await api('POST', 'compose', { ...c, framework: c.framework || undefined, camera: c.camera || undefined, look: c.look || undefined, textModel: c.textModel || undefined, direct: c.direct || undefined });
       res.concepts.forEach((x) => (x.render = defaultRender(c.platform)));
       c.result = res; await refreshLight();
     } finally { c.busy = false; render(); }
@@ -204,6 +204,7 @@ function viewCompose() {
       h('div', {}, h('label', {}, 'Scenes each'), h('input', { type: 'number', min: '1', max: '5', value: c.scenes, oninput: (e) => (c.scenes = Number(e.target.value) || 1) })),
       h('div', {}, h('label', {}, 'Seconds / scene'), h('input', { type: 'number', min: '2', max: '15', value: c.sceneSeconds, oninput: (e) => (c.sceneSeconds = Number(e.target.value) || 5) }))),
     h('label', {}, 'Quality'), chips([false, true], () => c.polish, (v) => { c.polish = v; drawTextQuote(); }, (v) => (v ? 'Polish pass (best, 2× writing cost)' : 'Standard')),
+    h('label', {}, 'Prompt Director (real-shoot image and motion prompts)'), chips(['', 'standard', 'cinematic'], () => c.direct || '', (v) => { c.direct = v; drawTextQuote(); }, (v) => (v === '' ? 'Off' : v === 'standard' ? 'Standard' : 'Cinematic (most detail)')),
     h('label', {}, 'Writing model (OpenRouter)'),
     modelPicker({ kind: 'text', value: c.textModel, noneLabel: 'Free template (no AI)', onChange: (id) => { c.textModel = id; drawTextQuote(); } }),
     noModels ? h('p', { class: 'small' }, 'No text models loaded. Add your OpenRouter key in Settings, then press “Refresh OpenRouter list” in Models.') : null,

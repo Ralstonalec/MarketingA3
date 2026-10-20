@@ -233,8 +233,8 @@ test('autopilot: one call writes the ad and renders every scene with the default
   const r = await call('POST', '/api/autopilot', { productId: prod.id, actorId: act.id, variants: 1, scenes: 2, brief: 'summer sale' });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   assert.equal(r.body.jobs.length, 2);
-  // text 0.0225 + 2 images x 0.039 + 2 videos x (0.12 x 5s)
-  assert.equal(r.body.quote.usd, 1.3005);
+  // writer 0.0225 + prompt director 0.0225 + 2 images x 0.039 + 2 videos x (0.12 x 5s)
+  assert.equal(r.body.quote.usd, 1.323);
   assert.equal(new Set(r.body.jobs.map((j) => j.campaignId)).size, 1);
   for (const j of r.body.jobs) {
     const done = await waitJob(j.id);
@@ -1174,4 +1174,41 @@ test('prompt director: user text is fenced, the budget is respected, and bad inp
   assert.equal((await call('POST', '/api/prompts', { productId: facts.id, actorId: act.id, mode: 'write', idea: 'x' })).status, 400);                       // no model chosen
   assert.equal((await dir({ textModel: 'or:acme/painter', mode: 'write', idea: 'x' })).status, 400);                                                       // not a text model
   orScript.length = 0;
+});
+
+// ---- Real-ad realism: physics rules, buzzword scrubbing, risky motion ----------------------------
+test('realism: the director and the writer are both told the physics and real-shoot rules', async () => {
+  const n0 = writerCalls().length;
+  orScript.push(JSON.stringify({ shots: [shot(IMG, MOT)] }));
+  assert.equal((await dir({ mode: 'write', idea: 'serum on a shelf', count: 1 })).status, 200);
+  const sys = writerCalls()[n0].messages[0].content;
+  assert.match(sys, /director of photography/); assert.match(sys, /gravity applies/); assert.match(sys, /masterpiece/);
+  assert.match(sys, /named light source|visible, named source/);
+  const n1 = writerCalls().length;
+  await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 1 });
+  assert.match(writerCalls()[n1].messages[0].content, /REAL-AD CRAFT AND PHYSICS/);
+});
+
+test('realism: glossy buzzwords are removed automatically; impossible motion sends the prompt back', async () => {
+  orScript.push(JSON.stringify({ shots: [shot(`masterpiece, 8k, @actor holds @product, perfect skin, ${words(26)}, ultra-detailed`, 'camera whip pan as the bottle floats and spins, then explodes into sparks ' + words(8))] }),
+    JSON.stringify({ shots: [shot(`@actor holds @product ${words(26)}`, MOT)] }));
+  const r = await dir({ mode: 'write', idea: 'hero', count: 1 });
+  assert.equal(r.body.attempts, 2);                                                       // risky motion was sent back once
+  const n = writerCalls().length;
+  assert.match(writerCalls()[n - 1].messages[3].content, /floats|spins|explod|whip/i);     // and the reply named the exact words
+  orScript.push(JSON.stringify({ shots: [shot(`masterpiece, 8k, @actor holds @product, perfect skin, ${words(26)}, ultra-detailed`, MOT)] }));
+  const clean = await dir({ mode: 'write', idea: 'hero', count: 1 });
+  assert.doesNotMatch(clean.body.shots[0].imagePrompt, /masterpiece|8k|perfect|ultra-detailed/i);
+  assert.match(clean.body.shots[0].imagePrompt, /@actor holds @product/);
+});
+
+test('realism: compose can run the director on every concept (extra call, extra cost, scenes rewritten)', async () => {
+  const n0 = writerCalls().length;
+  orScript.push(good(), JSON.stringify({ shots: [shot(IMG + ' directed one', MOT), shot(IMG + ' directed two', MOT)] }));
+  const r = await call('POST', '/api/compose', { textModel: 'or:acme/writer', productId: facts.id, actorId: act.id, variants: 1, scenes: 2, direct: 'standard' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(writerCalls().length - n0, 2);
+  assert.equal(r.body.calls, 2);
+  assert.equal(r.body.concepts[0].directed, 'standard');
+  assert.match(r.body.concepts[0].scenes[1].imagePrompt, /directed two/);
 });
