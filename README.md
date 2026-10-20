@@ -41,6 +41,10 @@ Models are not trusted. Every ad goes through the same pipeline (`lib/composer.j
 
 Put your real facts in **Library → product → Facts**. Ads can only state what is listed there. Brand voice, banned words and default CTA are in **Settings → Brand**.
 
+## Prompt Director (the text model writes the full image and motion prompts)
+
+In **Studio**, the "Write with AI" panel takes a one-line idea and the writing model returns a complete image prompt and motion prompt for your product and actor, or upgrades the prompts you already wrote ("Improve what I wrote"). In **Ad Composer**, each concept has a **Polish prompts** tab that rewrites every scene's prompts in one call so the look stays consistent from scene to scene. Both have **Standard** and **Cinematic** detail, show the price before you run, are charged to the spend ledger (purpose `prompt`) and respect the monthly cap, and have Undo. Output is checked (length, @actor/@product tags, no readable text in the picture, no real people or brands) and repaired up to twice before you are charged for a failure.
+
 ## Import from a link
 
 Library → *Import from a link*. The page is fetched safely (public addresses only, DNS pinned, redirects re-checked, size and time limits), the writing model organises it, and **every fact must quote the page verbatim or it is dropped**. You review the draft before saving.
