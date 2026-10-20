@@ -96,18 +96,44 @@ function hookBox(c) {
   return { box };
 }
 
+/** One call rewrites every scene's prompts together, so wardrobe, setting and lighting stay consistent between scenes. */
+function polishBox(c) {
+  const st = state.compose, box = h('div', {});
+  let detail = 'standard';
+  const noModel = !st.textModel;
+  const qb = noModel ? null : quoteBox(() => ({ textModel: st.textModel, textCalls: 1, textPurpose: 'prompt' }));
+  const run = h('button', { class: 'primary', disabled: noModel, onclick: guard(async (e) => {
+    e.target.disabled = true; e.target.textContent = 'Writing prompts…';
+    try {
+      const res = await api('POST', 'prompts', { mode: 'improve', detail, textModel: st.textModel, productId: st.productId, actorId: st.actorId, platform: st.platform, camera: st.camera || undefined, look: st.look || undefined,
+        ratio: (c.render && c.render.ratio) || '9:16', duration: c.scenes[0].seconds, shots: c.scenes.map((x) => ({ imagePrompt: x.imagePrompt, motionPrompt: x.motionPrompt, seconds: x.seconds })) });
+      c._undo = c.scenes.map((x) => ({ imagePrompt: x.imagePrompt, motionPrompt: x.motionPrompt }));
+      res.shots.forEach((x, i) => { c.scenes[i].imagePrompt = x.imagePrompt; c.scenes[i].motionPrompt = x.motionPrompt; });
+      toast(`Prompts rewritten (${money(res.usd)}, ${res.basis})`); await refreshLight(); render();
+    } finally { e.target.disabled = false; e.target.textContent = 'Polish all scene prompts'; }
+  }) }, 'Polish all scene prompts');
+  box.append(h('p', { class: 'small' }, 'The writing model rewrites every scene\'s image and motion prompt into a production-grade version in one call, keeping your details and keeping the look consistent from scene to scene.'),
+    h('label', {}, 'Detail'), chips(['standard', 'cinematic'], () => detail, (v) => (detail = v), (v) => (v === 'standard' ? 'Standard' : 'Cinematic (much more detail)')),
+    noModel ? h('div', { class: 'small warn', style: 'margin-top:8px' }, 'Choose a writing model on the left first.') : qb.el, run,
+    c._undo ? h('button', { class: 'ghost', style: 'margin-left:8px', onclick: () => { c._undo.forEach((x, i) => { c.scenes[i].imagePrompt = x.imagePrompt; c.scenes[i].motionPrompt = x.motionPrompt; }); c._undo = null; render(); } }, 'Undo last rewrite') : null);
+  if (qb) qb.update.now();
+  return { box };
+}
+
 /** Two small tools under each concept: the post kit and hook testing. Clicking a tab again closes it. */
 function toolTabs(c) {
-  const kit = postKitBox(c), hk = hookBox(c), holder = h('div', {});
-  let shown = null;
+  const kit = postKitBox(c), hk = hookBox(c), pb = polishBox(c), holder = h('div', {});
+  let shown = c._tab || null;
   const row = h('div', { class: 'chips', style: 'margin:6px 0' });
-  const tab = (name, node, onOpen) => h('button', { type: 'button', class: 'chip', onclick: async () => {
-    shown = shown === name ? null : name;
+  const tab = (name, node, onOpen) => h('button', { type: 'button', class: 'chip' + (shown === name ? ' sel' : ''), onclick: async () => {
+    shown = shown === name ? null : name; c._tab = shown;
     holder.replaceChildren(...(shown ? [node] : []));
     row.querySelectorAll('.chip').forEach((b) => b.classList.toggle('sel', b.textContent === shown));
     if (shown && onOpen) await onOpen();
   } }, name);
-  row.append(tab('Post kit', kit.box, kit.open), tab('Test hooks', hk.box));
+  row.append(tab('Polish prompts', pb.box), tab('Post kit', kit.box, kit.open), tab('Test hooks', hk.box));
+  const nodes = { 'Polish prompts': pb.box, 'Post kit': kit.box, 'Test hooks': hk.box };
+  if (shown && nodes[shown]) holder.replaceChildren(nodes[shown]);
   return h('div', {}, row, holder);
 }
 
@@ -151,13 +177,13 @@ function viewCompose() {
   const textQuoteWrap = h('div', {});
   const drawTextQuote = () => {
     if (!c.textModel) { textQuoteWrap.replaceChildren(h('div', { class: 'quote' }, h('div', { class: 'ln' }, h('span', {}, 'Template composer'), h('span', {}, '$0')), h('div', { class: 'small' }, 'Free, but simple. Choose an OpenRouter model for original concepts.'))); return; }
-    const qb = quoteBox(() => ({ textModel: c.textModel, textCalls: c.variants * (c.polish ? 2 : 1) })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
+    const qb = quoteBox(() => ({ textModel: c.textModel, textCalls: c.variants * ((c.polish ? 2 : 1) + (c.direct ? 1 : 0)) })); textQuoteWrap.replaceChildren(qb.el); qb.update.now();
   };
   drawTextQuote();
   const go = h('button', { class: 'primary', style: 'width:100%', disabled: c.busy || !(c.productId && c.actorId), onclick: guard(async (e) => {
     c.busy = true; e.target.disabled = true; e.target.textContent = 'Composing…';
     try {
-      const res = await api('POST', 'compose', { ...c, framework: c.framework || undefined, camera: c.camera || undefined, look: c.look || undefined, textModel: c.textModel || undefined });
+      const res = await api('POST', 'compose', { ...c, framework: c.framework || undefined, camera: c.camera || undefined, look: c.look || undefined, textModel: c.textModel || undefined, direct: c.direct || undefined });
       res.concepts.forEach((x) => (x.render = defaultRender(c.platform)));
       c.result = res; await refreshLight();
     } finally { c.busy = false; render(); }
@@ -178,6 +204,7 @@ function viewCompose() {
       h('div', {}, h('label', {}, 'Scenes each'), h('input', { type: 'number', min: '1', max: '5', value: c.scenes, oninput: (e) => (c.scenes = Number(e.target.value) || 1) })),
       h('div', {}, h('label', {}, 'Seconds / scene'), h('input', { type: 'number', min: '2', max: '15', value: c.sceneSeconds, oninput: (e) => (c.sceneSeconds = Number(e.target.value) || 5) }))),
     h('label', {}, 'Quality'), chips([false, true], () => c.polish, (v) => { c.polish = v; drawTextQuote(); }, (v) => (v ? 'Polish pass (best, 2× writing cost)' : 'Standard')),
+    h('label', {}, 'Prompt Director (real-shoot image and motion prompts)'), chips(['', 'standard', 'cinematic'], () => c.direct || '', (v) => { c.direct = v; drawTextQuote(); }, (v) => (v === '' ? 'Off' : v === 'standard' ? 'Standard' : 'Cinematic (most detail)')),
     h('label', {}, 'Writing model (OpenRouter)'),
     modelPicker({ kind: 'text', value: c.textModel, noneLabel: 'Free template (no AI)', onChange: (id) => { c.textModel = id; drawTextQuote(); } }),
     noModels ? h('p', { class: 'small' }, 'No text models loaded. Add your OpenRouter key in Settings, then press “Refresh OpenRouter list” in Models.') : null,
@@ -195,15 +222,49 @@ function viewCompose() {
 const CAMERA_TEXT = { dolly_in: 'slow smooth dolly in toward the subject', dolly_out: 'slow dolly out revealing more of the scene', orbit: 'camera slowly orbits around the subject, subject stays centered', handheld: 'natural handheld camera with subtle sway, selfie-style framing', crane_up: 'camera cranes upward and tilts down, revealing the scene', tracking: 'camera tracks sideways, keeping pace with the subject', whip_pan: 'fast whip pan to the subject, settling into a steady frame', macro_slide: 'macro lens, camera slides slowly across the surface detail', rack_focus: 'rack focus from foreground to the product', push_in_tilt: "slow push-in while tilting up to the subject's face", fpv: 'smooth first-person fly-through toward the subject', static: 'static locked-off camera, only the subject moves' };
 const LOOK_TEXT = { ugc: 'shot on a smartphone, natural light, casual authentic setting', natural: 'soft natural window light, real-life setting, true-to-life colors', studio: 'clean studio, soft key light, shallow depth of field, premium commercial look', golden: 'warm golden hour sunlight, soft long shadows', neon: 'night scene with colorful neon practical lights, cinematic contrast', luxe: 'moody cinematic lighting, rich contrast, high-end campaign look', macro: 'macro photography, crisp texture detail, soft background blur', bright: 'bright airy interior, white and pastel tones, soft diffused light' };
 
+function syncAi(s) {
+  const noModel = !s.textModel;
+  const w = document.querySelector('[data-ai="write"]'), i = document.querySelector('[data-ai="improve"]');
+  if (w) { w.disabled = noModel || !s.productId || !s.actorId; w.title = !s.productId || !s.actorId ? 'Pick a product and an actor first' : ''; }
+  if (i) i.disabled = noModel || !s.productId || !s.actorId || !s.imagePrompt.trim();
+}
+function aiPromptPanel(s) {
+  const noModel = !s.textModel;
+  const qb = noModel ? null : quoteBox(() => ({ textModel: s.textModel, textCalls: 1, textPurpose: 'prompt' }));
+  const call2 = (mode) => guard(async (e) => {
+    const btn = e.target, label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Writing…';
+    try {
+      const res = await api('POST', 'prompts', { mode, idea: s.idea, detail: s.detail, count: 1, textModel: s.textModel, productId: s.productId, actorId: s.actorId, platform: 'tiktok', ratio: s.ratio, duration: s.duration,
+        shots: mode === 'improve' ? [{ imagePrompt: s.imagePrompt, motionPrompt: s.motionPrompt, seconds: s.duration }] : undefined });
+      s.undo = { imagePrompt: s.imagePrompt, motionPrompt: s.motionPrompt };
+      s.imagePrompt = res.shots[0].imagePrompt; s.motionPrompt = res.shots[0].motionPrompt;
+      s.aiNote = `${mode === 'write' ? 'Written' : 'Improved'} by ${res.source} for ${money(res.usd)} (${res.basis})${res.notes.length ? '. ' + res.notes.map((n) => n.text).join(' ') : ''}`;
+      await refreshLight(); render();
+    } finally { btn.disabled = false; btn.textContent = label; }
+  });
+  return h('div', { class: 'quote', style: 'margin:0 0 16px' }, h('div', { style: 'font-weight:650;margin-bottom:6px' }, 'Write with AI'),
+    h('p', { class: 'small', style: 'margin:0 0 8px' }, 'Describe the shot in a line and the model writes the full image and motion prompts, or upgrades the ones you already wrote.'),
+    h('label', {}, 'Writing model'), modelPicker({ kind: 'text', value: s.textModel, onChange: (id) => { s.textModel = id; render(); } }),
+    h('label', {}, 'What should the shot show? (optional)'), h('textarea', { style: 'min-height:56px', placeholder: 'e.g. morning routine at the bathroom mirror, calm and bright', oninput: (e) => (s.idea = e.target.value) }, s.idea),
+    h('label', {}, 'Detail'), chips(['standard', 'cinematic'], () => s.detail, (v) => { s.detail = v; }, (v) => (v === 'standard' ? 'Standard' : 'Cinematic (much more detail)')),
+    noModel ? h('div', { class: 'small warn', style: 'margin-top:8px' }, 'Pick a writing model to use this.') : qb.el,
+    h('div', { class: 'row' }, h('button', { class: 'primary', disabled: noModel || !s.productId || !s.actorId, title: !s.productId || !s.actorId ? 'Pick a product and an actor first' : '', 'data-ai': 'write', onclick: call2('write') }, 'Write the prompts'),
+      h('button', { class: 'sec', disabled: noModel || !s.productId || !s.actorId || !s.imagePrompt.trim(), 'data-ai': 'improve', onclick: call2('improve') }, 'Improve what I wrote'),
+      s.undo ? h('button', { class: 'ghost fit', onclick: () => { s.imagePrompt = s.undo.imagePrompt; s.motionPrompt = s.undo.motionPrompt; s.undo = null; s.aiNote = ''; render(); } }, 'Undo') : null),
+    s.aiNote ? h('div', { class: 'small', style: 'margin-top:8px' }, s.aiNote) : null);
+}
+
 function viewStudio() {
   const s = state.studio;
+  if (s.textModel === undefined) { s.textModel = state.settings.defaults.text || null; s.detail = 'standard'; s.idea = ''; }
   if (!s.productId && state.products.length === 1) s.productId = state.products[0].id;
   if (!s.actorId && state.actors.length === 1) s.actorId = state.actors[0].id;
   if (!s.init) {
     const d = state.settings.defaults;
     Object.assign(s, { init: true, imageModel: d.image || null, videoModel: d.video || null, withVideo: !!d.video, imagePrompt: '@actor holding @product, bright studio, soft light, photorealistic, product label clearly visible.', motionPrompt: 'slow push-in, the person smiles and shows the product to camera.' });
   }
-  const imgBox = h('textarea', { style: 'min-height:110px', oninput: (e) => (s.imagePrompt = e.target.value) }, s.imagePrompt);
+  const imgBox = h('textarea', { style: 'min-height:110px', oninput: (e) => { s.imagePrompt = e.target.value; syncAi(s); } }, s.imagePrompt);
   const motBox = h('textarea', { oninput: (e) => (s.motionPrompt = e.target.value) }, s.motionPrompt);
   const addTo = (box, key, text) => { s[key] = `${s[key].replace(/[.,\s]+$/, '')}, ${text}`; box.value = s[key]; };
   const controls = renderControls(s, {
@@ -218,8 +279,9 @@ function viewStudio() {
   return h('div', {}, h('h1', {}, 'Studio'), h('p', { class: 'sub' }, 'One scene, full control: write the prompts yourself. Use @actor and @product to refer to your uploads.'),
     h('div', { class: 'cols' },
       h('div', { class: 'panel' },
-        h('label', {}, 'Product'), entityPicker(state.products, () => s.productId, (id) => (s.productId = id), 'Add a product in the Library first.'),
-        h('label', {}, 'Actor'), entityPicker(state.actors, () => s.actorId, (id) => (s.actorId = id), 'Add an actor in the Library first.'),
+        h('label', {}, 'Product'), entityPicker(state.products, () => s.productId, (id) => { s.productId = id; syncAi(s); }, 'Add a product in the Library first.'),
+        h('label', {}, 'Actor'), entityPicker(state.actors, () => s.actorId, (id) => { s.actorId = id; syncAi(s); }, 'Add an actor in the Library first.'),
+        aiPromptPanel(s),
         h('label', {}, 'Image prompt'), imgBox,
         h('div', { class: 'chips', style: 'margin-top:6px' }, state.meta.looks.map((x) => h('button', { type: 'button', class: 'chip', title: LOOK_TEXT[x.id], onclick: () => addTo(imgBox, 'imagePrompt', LOOK_TEXT[x.id]) }, '+ ' + x.label))),
         h('label', {}, 'Motion prompt (video)'), motBox,

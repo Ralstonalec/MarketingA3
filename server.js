@@ -253,6 +253,7 @@ async function api(req, res, url) {
     catch (e) { return send(res, 200, { error: e.message }); } // soft: the UI shows why there is no price yet
   }
   if (root === 'autopilot' && m === 'POST') return send(res, 201, await autopilot.run(await readJson(req)));
+  if (root === 'prompts' && m === 'POST') return send(res, 200, await composer.writePrompts(await readJson(req)));
   if (root === 'hooks' && m === 'POST') return send(res, 200, await composer.hookVariants(await readJson(req)));
   if (root === 'postkit' && m === 'POST') return send(res, 200, postkit.build(await readJson(req)));
   if (root === 'compose' && m === 'POST') return send(res, 200, await composer.compose(await readJson(req)));

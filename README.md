@@ -41,6 +41,15 @@ Models are not trusted. Every ad goes through the same pipeline (`lib/composer.j
 
 Put your real facts in **Library → product → Facts**. Ads can only state what is listed there. Brand voice, banned words and default CTA are in **Settings → Brand**.
 
+## Prompt Director (the text model writes the full image and motion prompts)
+
+In **Studio**, the "Write with AI" panel takes a one-line idea and the writing model returns a complete image prompt and motion prompt for your product and actor, or upgrades the prompts you already wrote ("Improve what I wrote"). In **Ad Composer**, each concept has a **Polish prompts** tab that rewrites every scene's prompts in one call so the look stays consistent from scene to scene. Both have **Standard** and **Cinematic** detail, show the price before you run, are charged to the spend ledger (purpose `prompt`) and respect the monthly cap, and have Undo. Output is checked (length, @actor/@product tags, no readable text in the picture, no real people or brands) and repaired up to twice before you are charged for a failure.
+
+### Real-ad realism (why the video should not look like AI slop)
+Every prompt the app writes follows one rule set (`lib/realism.js`): a named lens, camera height and light source; ordinary real places with a few props; honest imperfections instead of "flawless" skin; one slow camera move plus one small human action per clip; physics that holds (gravity, contact, liquids, hair and fabric trailing, a rigid product that never changes shape). Quality buzzwords (masterpiece, 8k, hyper-realistic...) are removed automatically, and motion that image-to-video models cannot do (floating, morphing, spinning, splashes, talking to camera, fast pans) is sent back to the writer with the exact words named. The **Prompt Director** setting in Ad Composer (and Quick Ad, always on) runs a second pass that rewrites every scene into a shot note.
+
+Tips that matter as much as the prompt: keep clips to 3-5 seconds and cut between them like a real ad; use a strong image-to-video model; generate two takes of important shots and keep the better one.
+
 ## Import from a link
 
 Library → *Import from a link*. The page is fetched safely (public addresses only, DNS pinned, redirects re-checked, size and time limits), the writing model organises it, and **every fact must quote the page verbatim or it is dropped**. You review the draft before saving.

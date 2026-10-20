@@ -2,7 +2,7 @@
 const state = {
   priceChanges: [], syncInfo: {},
   view: 'quick', products: [], actors: [], jobs: [], runs: [], models: [], modelsFetchedAt: null, settings: null, spend: null, meta: null,
-  compose: { productId: null, actorId: null, platform: 'tiktok', framework: '', camera: '', look: '', polish: false, tone: 'energetic, authentic', cta: '', brief: '', variants: 2, scenes: 2, sceneSeconds: 5, textModel: null, result: null, busy: false },
+  compose: { productId: null, actorId: null, platform: 'tiktok', framework: '', camera: '', look: '', polish: false, direct: 'standard', tone: 'energetic, authentic', cta: '', brief: '', variants: 2, scenes: 2, sceneSeconds: 5, textModel: null, result: null, busy: false },
   tools: { modelId: null, prompt: '', duration: 5, ratio: '9:16', slots: {}, preset: null },
   studio: { productId: null, actorId: null, imagePrompt: '', motionPrompt: '', ratio: '9:16', duration: 5, withVideo: false, imageModel: null, videoModel: null },
 };
